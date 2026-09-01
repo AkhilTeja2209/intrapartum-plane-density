@@ -90,13 +90,83 @@ def make_fake_dataset(root: Path, n_videos: int = 20, seed: int = 0) -> Path:
     return root
 
 
+def _check_label_parsing(failures: list) -> None:
+    """Guard the two defects that left the real index with zero train labels.
+
+    Both were silent. The ALL sentinel parsed to an empty set, and the doubled
+    filenames in the published zip matched no label row -- between them every
+    standard-plane training video was dropped, and the pipeline ran to
+    completion on what was left. These assertions are cheap and they fail loudly
+    if either regresses.
+    """
+    import tempfile as _tf
+
+    from .build_index import (canonical_video_id, load_video_index_table,
+                              parse_index_list)
+
+    # -- ALL / NONE sentinels (train/cls/class_label.csv uses them) ---------
+    _check(parse_index_list("ALL", 20) == set(range(20)),
+           "'ALL' expands to every frame", failures)
+    _check(parse_index_list("NONE", 20) == set(),
+           "'NONE' expands to no frames", failures)
+    _check(parse_index_list("all", 5) == set(range(5)),
+           "sentinel match is case-insensitive", failures)
+    try:
+        parse_index_list("ALL")
+        _check(False, "'ALL' without frame_count raises", failures)
+    except ValueError:
+        _check(True, "'ALL' without frame_count raises", failures)
+
+    # -- doubled stems, and the legitimate '__' that must survive ------------
+    _check(canonical_video_id("20190909T155747I1__20190909T155747I1")
+           == "20190909T155747I1", "doubled stem 'X__X' collapses to 'X'",
+           failures)
+    _check(canonical_video_id("20190830T115644__B_produce_tmp_0")
+           == "20190830T115644__B_produce_tmp_0",
+           "ordinary '__' in a filename is left alone", failures)
+    _check(canonical_video_id("a__b") == "a__b",
+           "unequal halves are left alone", failures)
+
+    # -- end to end through the real loader ---------------------------------
+    with _tf.TemporaryDirectory() as td:
+        csv = Path(td) / "class_label.csv"
+        csv.write_text(
+            "filename,frame_count,pos_index,neg_index\n"
+            "vidA__vidA.avi,4,ALL,NONE\n"
+            "vidB.avi,4,NONE,ALL\n"
+            "vidC.avi,4,\"[0, 1]\",\"[2, 3]\"\n",
+            encoding="utf-8")
+        t = load_video_index_table(csv)
+        _check(len(t) == 12, f"sentinel CSV yields every frame ({len(t)}/12)",
+               failures)
+        _check(set(t.video_id) == {"vidA", "vidB", "vidC"},
+               "doubled stem is canonicalised on load", failures)
+        _check(int(t[t.video_id == "vidA"].label.sum()) == 4,
+               "ALL video is fully positive", failures)
+        _check(int(t[t.video_id == "vidB"].label.sum()) == 0,
+               "NONE video is fully negative", failures)
+
+        bad = Path(td) / "bad.csv"
+        bad.write_text(
+            "filename,frame_count,pos_index,neg_index\n"
+            "vidD.avi,10,ALL,\"[0, 1]\"\n", encoding="utf-8")
+        try:
+            load_video_index_table(bad)
+            _check(False, "ALL that fails to partition is rejected", failures)
+        except SystemExit:
+            _check(True, "ALL that fails to partition is rejected", failures)
+
+
 def run_synthetic(keep: bool = False) -> int:
     failures: list[str] = []
     root = Path(tempfile.mkdtemp(prefix="spc_smoke_"))
     print(f"\nworking in {root}\n")
 
     try:
-        print("1. generate fake dataset")
+        print("0. label-parsing regression guards")
+        _check_label_parsing(failures)
+
+        print("\n1. generate fake dataset")
         make_fake_dataset(root)
         _check((root / "frames" / "train").exists(), "frames written", failures)
 

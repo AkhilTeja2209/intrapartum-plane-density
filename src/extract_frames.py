@@ -68,6 +68,28 @@ def assign_ids(videos: list[Path], root: Path) -> dict[Path, str]:
     return ids
 
 
+def _write_jpeg(path: Path, frame, quality: int) -> None:
+    """Encode in memory, then write through Python's file IO.
+
+    cv2.imwrite() passes the path to the C++ layer, which on Windows encodes it
+    with the process ANSI codepage. 71 of this dataset's train videos have
+    Chinese characters in their filename (..._B_产科_tmp_0), so every write for
+    those videos failed -- and imwrite reports failure by RETURNING False, which
+    nothing was checking. The extractor counted the decoded frames and recorded
+    them in manifest.csv, so the videos looked extracted while their output
+    folders were empty, and they vanished from the study without one error.
+
+    imencode does the same JPEG compression but hands back a buffer, and
+    Path.write_bytes uses Python's Unicode-aware IO, so the path encoding never
+    reaches OpenCV.
+    """
+    ok, buf = cv2.imencode(".jpg", frame,
+                           [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError(f"cv2.imencode failed for {path}")
+    path.write_bytes(buf.tobytes())
+
+
 def extract_one(video: Path, vid_id: str, out_dir: Path, short_side: int,
                 quality: int, overwrite: bool = False) -> int:
     """Extract every frame of one video. Returns the frame count written."""
@@ -100,8 +122,7 @@ def extract_one(video: Path, vid_id: str, out_dir: Path, short_side: int,
             )
         # Zero-padded index so lexical sort == temporal sort. The temporal
         # models depend on this.
-        cv2.imwrite(str(dst / f"{n:06d}.jpg"), frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        _write_jpeg(dst / f"{n:06d}.jpg", frame, quality)
         n += 1
     cap.release()
     return n

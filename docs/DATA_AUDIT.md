@@ -1,22 +1,33 @@
 # Data audit — DatasetV3 as actually shipped
 
 Findings from inspecting the unpacked `data/DatasetV3` tree and the generated
-`data/index.csv` on 2026-09-02. Three of these contradict assumptions written
-into `README.md` and `PROTOCOL.md`, so read this before trusting either.
+`data/index.csv`, 2026-09-02.
 
-## Summary of the index as it currently stands
+**B1–B4 are pipeline defects and are fixed.** Every one of them was silent: no
+exception, no non-zero exit, just wrong numbers. **S1–S4 are properties of the
+dataset that contradict assumptions written into `README.md` and `PROTOCOL.md`**
+— those are design decisions, not bugs, and they are still open. Read this
+before trusting either document.
+
+## Summary of the index
+
+All three blocking defects below are **fixed**; the figures are the rebuilt
+index. The original broken state is recorded in each section, because the
+failure mode — not one of them raised an error — is the reusable lesson.
 
 | | videos | frames | labelled | pos-rate |
 |---|---:|---:|---:|---:|
-| train | 434 | 44,751 | **0** | — |
+| train | 434 | 53,996 | 53,996 | 0.418 |
 | val | 40 | 2,870 | 2,870 | 0.556 |
 | test | 300 | 8,665 | 8,665 | 0.556 |
+| **total** | **774** | **65,531** | **65,531** | **0.442** |
 
-**Zero labelled training frames.** Nothing can be trained until this is fixed.
+Join rate is 1.0000 on every split. Before the fixes: 703 videos, 56,286
+frames, and **zero labelled training frames**.
 
 ---
 
-## B1 — `parse_index_list` does not handle the `ALL` sentinel  *(blocker)*
+## B1 — `parse_index_list` did not handle the `ALL` sentinel  *(fixed)*
 
 `train/cls/class_label.csv` uses two sentinel strings, documented in the
 dataset's own `README_EN.md`:
@@ -31,51 +42,68 @@ Distribution over the 434 train videos:
 | `ALL` | `NONE` | 266 |
 | `NONE` | `ALL` | 168 |
 
-`parse_index_list` in `src/build_index.py` returns the empty set for `"NONE"`
-(correct) and *also* for `"ALL"` — the string is not a Python literal, so it
-falls through to the regex branch, which finds no digits and returns `set()`.
-Every train video therefore contributes zero labelled frames.
+`parse_index_list` returned the empty set for `"NONE"` (correct) and *also* for
+`"ALL"` — the string is not a Python literal, so it fell through to the regex
+branch, which found no digits and returned `set()`. Every train video therefore
+contributed zero labelled frames.
 
-The fix is a single case, but it must expand against `frame_count`:
+Fixed by resolving the sentinel against the row's `frame_count`. Three
+guardrails came with it, because a sentinel that silently resolves to nothing is
+exactly what caused the original bug:
 
-```python
-if s.upper() == "ALL":
-    if frame_count is None:
-        raise ValueError("'ALL' needs frame_count to expand")
-    return set(range(frame_count))
-```
+- `ALL` without a `frame_count` column raises instead of returning `set()`
+- for any sentinel row, `pos` and `neg` must be **disjoint** — a frame in both
+  means the blanket sentinel contradicts an explicit list, and letting the
+  sentinel win would discard the more specific annotation
+- for any sentinel row, `pos | neg` must cover **exactly** `frame_count`
 
-Note the asymmetry this creates and guard it: with `pos_index=ALL` and
-`neg_index=NONE`, the two sets must partition the video exactly. Assert
-`len(pos | neg) == frame_count` and `not (pos & neg)` per video, and fail
-loudly rather than silently dropping frames.
+## B2 — 266 train filenames are doubled **in the published zip**  *(fixed)*
 
-## B2 — 266 of 434 train video filenames do not join  *(blocker)*
-
-The unpack step produced doubled stems on disk for exactly the 266
-standard-plane videos:
+The train videos ship under doubled stems, and the label CSV does not use them:
 
 | source | stem |
 |---|---|
 | `class_label.csv` | `20190909T155747I1` |
-| on disk / `manifest.csv` | `20190909T155747I1__20190909T155747I1` |
+| `train/videos/` in the Zenodo zip | `20190909T155747I1__20190909T155747I1` |
 
-168 stems join; 434 − 168 = 266 do not — the same 266 that carry
-`pos_index=ALL`. So B1 and B2 independently destroy *every positive training
-video*, and fixing only one of them still yields an all-negative training set
-that trains to a degenerate classifier without erroring.
+168 stems joined; the other 266 did not — the same 266 carrying `pos_index=ALL`.
+So B1 and B2 independently destroyed *every positive training video*, and fixing
+only one of them still yielded an all-negative training set that would train to
+a degenerate classifier without erroring.
 
-Fix in `unpack_dataset.py` (stop generating `X__X`), then normalise stems on
-join with a `stem.split("__")[0] if stem == doubled else stem` rule, and
-**assert the join rate is 1.0** rather than logging it.
+This is an upstream packaging defect: the doubling is inside the distributed
+archive, so no unpack or extract step can avoid it. It is reconciled at join
+time by `canonical_video_id()`, which collapses a stem only when it is exactly
+`H__H`. The exactness matters — legitimate filenames in this dataset use `__` as
+an ordinary separator (`20190830T115644__B_产科_tmp_0`), and splitting on the
+first occurrence would mangle them. `frame_path` keeps the real on-disk
+directory name, so only the join key is rewritten and the loader still resolves.
 
-## B3 — 71 train videos and 9,245 frames vanish between manifest and index
+## B3 — 71 videos extracted zero frames: `cv2.imwrite` and non-ASCII paths  *(fixed)*
 
-`data/frames/manifest.csv` records 774 videos / 65,531 frames.
-`data/index.csv` contains 703 videos / 56,286 frames. The 71 missing videos are
-all in the train split. Cause not yet established — likely the same stem
-mismatch, or extraction failures swallowed by a `try/except`. Add a reconcile
-assertion between manifest and index.
+`manifest.csv` recorded 774 videos / 65,531 frames while the disk held 703
+videos / 56,286 frames. The 71 missing videos are exactly those whose filenames
+contain Chinese characters (`..._B_产科_tmp_0`).
+
+`cv2.imwrite()` hands the path to OpenCV's C++ layer, which on Windows encodes
+it with the process ANSI codepage. For these paths the encoding fails, and
+**imwrite reports that by returning `False`** — which nothing was checking. The
+extractor decoded each video, counted the frames, wrote the count into the
+manifest, and produced an empty folder. The videos looked extracted and vanished
+from the study without a single error.
+
+Fixed by encoding in memory with `cv2.imencode()` and writing through
+`Path.write_bytes()`, so the path never reaches OpenCV. `build_index` now also
+refuses to run when any extracted folder is empty or disagrees with the
+manifest, gated behind `--allow-empty-dirs`.
+
+## B4 — Duplicate label files were deduplicated without being compared  *(fixed)*
+
+`cls_label.csv` and `*_info.csv` encode the same val/test labels twice — 11,535
+overlapping `(video, frame)` pairs. The merge kept the first row seen, so a
+genuine disagreement between the two files would have been resolved by
+filesystem scan order. The copies do in fact agree everywhere, but that was
+never checked. `build_index` now verifies agreement and raises on conflict.
 
 ---
 
@@ -105,19 +133,39 @@ A "standard-plane" train video is one *containing* a standard plane; its 124
 frames are not all standard planes in the ordinary sense. Training on them as
 frame labels is **learning from noisy positive bags**, not clean supervision.
 
-Consequences, in order of severity, are worked through in `ROADMAP.md` R2.
+`build_index` now measures and reports this rather than leaving it to be
+inferred — it counts videos whose frames all carry one label:
+
+```
+train        434 / 434 videos single-label  -> video-level (weak) labels
+val            3 /  40 videos single-label  -> frame-level labels
+test          37 / 300 videos single-label  -> frame-level labels
+```
+
+434 of 434 is the signature of whole-video annotation. Consequences, in order of
+severity, are worked through in `ROADMAP.md` R2.
 
 ## S3 — The class prior is ~56% positive, not ~17%
 
 `PROTOCOL.md` assumes a ~17% standard-plane rate and warns that "plain accuracy
-sits in the low 80s for a model that always predicts non-standard." On the real
-frame-level splits the positive rate is **0.556**. A majority-class classifier
-scores ~56%, not ~83%.
+sits in the low 80s for a model that always predicts non-standard." The rebuilt
+index says otherwise:
+
+| split | positive rate |
+|---|---:|
+| train (video-level labels) | 0.418 |
+| val | 0.556 |
+| test | 0.556 |
+| pooled | 0.442 |
+
+A majority-class classifier scores ~56% on test, not ~83%. Nothing here is
+meaningfully imbalanced.
 
 The imbalance-aware metric set is still the right choice, but the specific
 numbers, the `stratum()` buckets in `src/splits.py` (which top out at
 `pos_rate >= 0.30` and would collapse nearly every video into one bucket), and
-the inverse-frequency weighting rationale all need rewriting against 0.556.
+the inverse-frequency weighting rationale all need rewriting against these
+figures.
 
 ## S4 — Unused assets: segmentation masks and AoP/HSD landmarks
 

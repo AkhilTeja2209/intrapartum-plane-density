@@ -45,38 +45,47 @@ positive effect, because they are the measurements the field skipped.
 |---|---|
 | Pipeline code (15 modules, ~3,200 lines) | Written, coherent, well-documented |
 | Dataset downloaded and unpacked | Done (774 videos) |
-| Frame extraction | Done — 65,531 frames on disk |
-| Frame index | **Broken** — 0 of 44,751 train frames carry a label |
-| Splits / budgets | Not run (blocked on the index) |
+| Frame extraction | Done — 65,531 frames across all 774 videos |
+| Frame index | Done — 65,531 frames, join rate 1.0000, 0 unlabelled |
+| Splits / budgets | Not run — unblocked, but wait for R1/R2 |
 | Any training run | Not started |
 | Results, figures, Grad-CAM | Not started |
 
-The code is in good shape. What is broken is the join between frames and
-labels, and it is broken in a way that would not crash — it would train an
-all-negative or empty classifier and report a number. Details and fixes:
-[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md).
+Phase 0 is complete: the frame/label join is fixed and every frame now carries
+a label. What remains is **design** work, not repair — the dataset turned out to
+differ from what `PROTOCOL.md` assumes in three ways that change the experiment
+(R1, R2, R3). Evidence for all of it: [`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md).
+
+The index as rebuilt:
+
+| split | videos | frames | pos-rate | annotation |
+|---|---:|---:|---:|---|
+| train | 434 | 53,996 | 0.418 | **video-level** (weak) |
+| val | 40 | 2,870 | 0.556 | frame-level |
+| test | 300 | 8,665 | 0.556 | frame-level |
 
 ---
 
 ## 3. Work breakdown
 
-### Phase 0 — Unblock the index  *(hours, do first)*
+### Phase 0 — Unblock the index  *(done)*
 
-- [ ] **B1** Handle the `ALL` sentinel in `parse_index_list`, expanding against `frame_count`
-- [ ] **B2** Stop `unpack_dataset.py` producing `X__X` stems; normalise on join
-- [ ] **B3** Reconcile `manifest.csv` against `index.csv`; account for the 71 lost train videos
-- [ ] Turn the join-rate *log line* into an **assertion**: `assert join_rate == 1.0`
-- [ ] Re-run `build_index`; confirm 434 train videos labelled and the pos-rate is plausible
-- [ ] Extend `src/smoke_test.py` with a synthetic fixture using `ALL`/`NONE` sentinels and a doubled stem, so both bugs stay fixed
+- [x] **B1** Resolve the `ALL` sentinel against `frame_count`, and require sentinel rows to partition the video exactly
+- [x] **B2** Collapse the doubled `X__X` stems shipped in the Zenodo zip, on the join key only
+- [x] **B3** Fix `cv2.imwrite` silently failing on non-ASCII paths; all 71 lost videos recovered
+- [x] **B4** Verify duplicate label files agree instead of keeping whichever was scanned first
+- [x] Join rate, empty folders and manifest/disk agreement are now **assertions**, escapable with `--allow-unlabelled` / `--allow-empty-dirs`
+- [x] `build_index` reports annotation granularity per split, so S2 is visible at build time
+- [x] `src/smoke_test.py` stage 0 guards both defects (12 assertions, including the legitimate `__` that must survive)
 
-**Exit criterion:** zero frames with `label == -1` outside the intended set, and
-a printed per-split video/frame/pos-rate table you have actually read.
+**Result:** 65,531 frames / 774 videos, join rate 1.0000 on all three splits,
+zero unlabelled. Full synthetic smoke test passes end to end.
 
 ### Phase 1 — Rebuild the design around the real data  *(days)*
 
 - [ ] **R1** Adopt the official test split (labels are public — see audit S1)
 - [ ] **R2** Decide and document the train weak-label strategy (audit S2)
-- [ ] **R3** Recalibrate strata, weighting and prose to a 0.556 positive rate (audit S3)
+- [ ] **R3** Recalibrate strata, weighting and prose to the real positive rates (audit S3)
 - [ ] Rewrite the affected passages of `PROTOCOL.md` — it currently asserts three things about the data that are false
 - [ ] Re-run `splits.py` and `make_budgets.py`; record the actual Protocol B budgets
 
@@ -164,18 +173,23 @@ quartiles of the observed distribution. Inverse-frequency weighting is now close
 to a no-op — keep it for consistency across conditions, but stop citing
 imbalance as a headline difficulty.
 
-### R4 — Make the pipeline fail loudly  *(low cost, high leverage)*
+### R4 — Make the pipeline fail loudly  *(done for `build_index`; extend outward)*
 
-Every bug found in this audit is silent. The pipeline logs a join rate and
-carries on; it drops 71 videos and carries on. Convert the three most dangerous
-log lines into assertions with `--force` escapes:
+Every defect in this audit was silent. The pipeline logged a join rate and
+carried on; it dropped 71 videos and carried on; it resolved a documented
+sentinel to nothing and carried on. Four invariants are now enforced in
+`build_index`, each with an explicit escape hatch rather than a default-on
+tolerance:
 
-- join rate must be 1.0 for train and val
-- manifest frame count must equal index frame count
-- per video, positives and negatives must partition the frames exactly
+- join rate must be 1.0 per split (`--allow-unlabelled` to override)
+- no extracted folder may be empty, and the manifest must match the disk
+  (`--allow-empty-dirs`)
+- sentinel rows must partition their video exactly, with no overlap
+- duplicate label files must agree, not merely deduplicate
 
-Add a `python -m src.validate` target that runs every invariant against the real
-index in under a minute, and run it after each regeneration.
+Still to do: apply the same treatment to `splits.py` and `run_experiment.py`,
+and add a `python -m src.validate` target that re-checks every invariant against
+a written index in under a minute, so the guarantees survive a hand-edited CSV.
 
 ### R5 — Version the artefacts, not just the code  *(low cost)*
 

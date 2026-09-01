@@ -5,11 +5,16 @@ classification, on the IUGC 2024 dataset
 ([Zenodo 10.5281/zenodo.17655183](https://zenodo.org/records/17655183),
 774 videos / 68,106 frames / 1.1 GB, CC-BY-4.0).
 
-> **Status — read this first.** The pipeline is written but not yet runnable
-> end to end: the frame/label join is broken and **0 of 44,751 training frames
-> currently carry a label**. Three assumptions in `PROTOCOL.md` also turn out
-> to be false for this dataset release. See **[`ROADMAP.md`](ROADMAP.md)** for
-> the plan and **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
+> **Status — read this first.** Data preparation is done and verified:
+> **65,531 frames / 774 videos, label join rate 1.0000, zero unlabelled.** No
+> training run has happened yet.
+>
+> Before running anything, note that three assumptions in `PROTOCOL.md` are
+> false for this dataset release — the official test labels *are* public, the
+> training labels are video-level rather than per-frame, and the positive rate
+> is ~0.44, not ~0.17. Each changes the experiment. See
+> **[`ROADMAP.md`](ROADMAP.md)** for the plan and
+> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
 
 Read **`PROTOCOL.md`** first. It contains the experimental design, one design
 problem in the current abstract that needs fixing before you run anything, and
@@ -42,12 +47,16 @@ python -m src.analyze --results-dir results --out-dir report
 
 `./run_all.sh` runs the whole grid across three seeds.
 
-**Check the `build_index` output before going further.** It auto-detects the
-column names in `class_label.csv` and prints what it found, the join rate, and
-the resulting class balance. If the standard-plane rate looks implausible or
-many frames come back unlabelled, the column mapping is wrong — fix
-`LABEL_COLS` / `_parse_frame_ref` in `src/build_index.py` rather than letting a
-silent mis-parse poison every number downstream.
+**`build_index` now enforces its own invariants** rather than reporting them.
+It refuses to write an index if any split has a join rate below 1.0, if an
+extracted folder is empty or disagrees with `manifest.csv`, if an `ALL`/`NONE`
+sentinel does not partition its video exactly, or if two label files disagree
+about the same frame. `--allow-unlabelled` and `--allow-empty-dirs` override
+these, but only reach for them once you know why the shortfall is genuine.
+
+It also prints the column mapping it auto-detected and the annotation
+granularity per split. Read that output — a silent mis-parse here would poison
+every number downstream, and it has already happened once (see the audit).
 
 ## Layout
 
