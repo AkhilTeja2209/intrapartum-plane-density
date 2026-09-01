@@ -118,32 +118,63 @@ test frames are already labelled in `index.csv`.
 This is strictly good news and it changes the evaluation design — see
 [`ROADMAP.md`](../ROADMAP.md) R1.
 
-## S2 — Train labels are **video-level**; val/test are **frame-level**
+## S2 — Train is **trimmed clips**, val/test are **untrimmed sweeps**
 
-This is the deepest structural fact about the dataset and it is not reflected
-anywhere in the current protocol.
+An earlier version of this section read the whole-video `ALL`/`NONE` labels as
+weak *bag* labels — "this video contains a standard plane somewhere" — and
+concluded the training data was noisy positives. **That was wrong, and the
+dataset's own segmentation annotations disprove it.**
 
-| split | annotation granularity | videos | mean frames/video |
-|---|---|---:|---:|
-| train | one label for the whole video (`ALL`/`NONE`) | 434 | 124 (9–778) |
-| val | per-frame index lists | 40 | 72 (41–101) |
-| test | per-frame index lists | 300 | 29 (20–70) |
+`ALL` is meant literally. Evidence:
 
-A "standard-plane" train video is one *containing* a standard plane; its 124
-frames are not all standard planes in the ordinary sense. Training on them as
-frame labels is **learning from noisy positive bags**, not clean supervision.
+| test | result |
+|---|---|
+| Videos with PS/fetal-head segmentation | 266 — **exactly** the 266 `pos_index=ALL` videos, and none of the 168 negatives |
+| Masks per positive video | 9.7 on average, spanning 10%→98% of the clip; 246/266 span more than 80% |
+| Annotated frames yielding a measurable AoP | 2,575 / 2,575 |
+| Within-video AoP spread | median **5.2°** (p90 14°) |
 
-`build_index` now measures and reports this rather than leaving it to be
-inferred — it counts videos whose frames all carry one label:
+Segmenting the pubic symphysis and fetal head is only possible on a measurable
+plane, and an angle of progression can only be computed once both are resolved.
+Annotators produced both at frames spread across the entire clip, and the
+measured anatomy barely moves. The positive training videos are **trimmed
+standard-plane clips**: a held plane from first frame to last. Frame counts
+agree — positives run 40–157 frames (median 80) while negatives run 9–778
+(median 96).
 
-```
-train        434 / 434 videos single-label  -> video-level (weak) labels
-val            3 /  40 videos single-label  -> frame-level labels
-test          37 / 300 videos single-label  -> frame-level labels
-```
+So the training labels are genuine frame-level labels, coarsely encoded. There
+is no bag-label problem to solve.
 
-434 of 434 is the signature of whole-video annotation. Consequences, in order of
-severity, are worked through in `ROADMAP.md` R2.
+### The real consequence: no training video contains a label transition
+
+| split | videos | transitions/video | videos that are entirely one class |
+|---|---:|---:|---|
+| train | 434 | **0.00** | 434 / 434 |
+| val | 40 | 0.93 | 3 / 40 |
+| test | 300 | 1.35 | 37 / 300 |
+
+Run lengths in the mixed videos: val median 33 frames, test median 12.
+
+Train is 266 clips of pure standard plane plus 168 clips of pure non-standard.
+Val and test are sweeps that pass into and out of plane. Two consequences, and
+the second is severe:
+
+1. **Arm 1** is affected only in interpretation. Within a positive training
+   video every frame carries the same label and the anatomy is near-static
+   (5.2° of AoP drift), so raising sampling density adds *redundant views of one
+   plane*, not label diversity. The density curve is still measurable; it is a
+   redundancy curve, and the paper should call it that.
+
+2. **Arm 2 cannot be run on this split as specified.** A BiLSTM trained where
+   the label never changes can reach zero training loss by ignoring time and
+   emitting one constant per clip — it never observes a transition, which is
+   the only thing a temporal model has to contribute. The smoothed-CNN baseline,
+   by contrast, has its window and Viterbi `p_stay` tuned on validation, which
+   *does* contain transitions. Comparing them would measure the split, not the
+   architecture. `ROADMAP.md` R2 carries the options.
+
+`src/splits.py` computes and reports transitions per video for exactly this
+reason, and warns when the training split contains none.
 
 ## S3 — The class prior is ~56% positive, not ~17%
 

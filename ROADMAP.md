@@ -47,22 +47,24 @@ positive effect, because they are the measurements the field skipped.
 | Dataset downloaded and unpacked | Done (774 videos) |
 | Frame extraction | Done — 65,531 frames across all 774 videos |
 | Frame index | Done — 65,531 frames, join rate 1.0000, 0 unlabelled |
-| Splits / budgets | Not run — unblocked, but wait for R1/R2 |
+| Splits | Done — official scheme, leakage assertions pass |
+| Budgets | Not run |
 | Any training run | Not started |
 | Results, figures, Grad-CAM | Not started |
 
-Phase 0 is complete: the frame/label join is fixed and every frame now carries
-a label. What remains is **design** work, not repair — the dataset turned out to
-differ from what `PROTOCOL.md` assumes in three ways that change the experiment
-(R1, R2, R3). Evidence for all of it: [`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md).
+Phase 0 is complete and Phase 1's three design questions are settled: R1 (use
+the official split), R2 (train frame-wise), R3 (data-derived strata). One
+decision remains open and it blocks Phase 3 only — how to give the temporal arm
+the label transitions the training split does not contain. Evidence for all of
+it: [`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md).
 
 The index as rebuilt:
 
 | split | videos | frames | pos-rate | annotation |
 |---|---:|---:|---:|---|
-| train | 434 | 53,996 | 0.418 | **video-level** (weak) |
-| val | 40 | 2,870 | 0.556 | frame-level |
-| test | 300 | 8,665 | 0.556 | frame-level |
+| train | 434 | 53,996 | 0.418 | trimmed clips — **0.00** label transitions/video |
+| val | 40 | 2,870 | 0.556 | sweeps — 0.93 transitions/video |
+| test | 300 | 8,665 | 0.556 | sweeps — 1.35 transitions/video |
 
 ---
 
@@ -83,11 +85,15 @@ zero unlabelled. Full synthetic smoke test passes end to end.
 
 ### Phase 1 — Rebuild the design around the real data  *(days)*
 
-- [ ] **R1** Adopt the official test split (labels are public — see audit S1)
-- [ ] **R2** Decide and document the train weak-label strategy (audit S2)
-- [ ] **R3** Recalibrate strata, weighting and prose to the real positive rates (audit S3)
-- [ ] Rewrite the affected passages of `PROTOCOL.md` — it currently asserts three things about the data that are false
-- [ ] Re-run `splits.py` and `make_budgets.py`; record the actual Protocol B budgets
+- [x] **R1** Adopt the official split — `splits.py --scheme official` is the default; `regrouped` kept for sensitivity analysis
+- [x] **R2** Train weak-label strategy decided: **frame-wise supervision**, no MIL. The labels are literal; what is missing is label *transitions* in train
+- [x] **R3** `make_strata()` derives buckets from the data instead of assuming a 17% prior
+- [x] Protocol B budgets computed against the real split and written to `configs/default.yaml` (2,170 and 8,638)
+- [ ] **R9** Add the prior-matched dense arm — the class prior moves with the density axis (0.613 sparse vs 0.415 dense)
+- [ ] **R10** Drop or redefine `sparse_k1_curated`; it is now a duplicate of `sparse_k1`
+- [ ] Choose the Arm 2 remedy from R2 (splice / train-on-val / report-and-stop) — blocks Phase 3, not Phase 2
+- [ ] Rewrite the affected passages of `PROTOCOL.md` — it still asserts three things about the data that are false
+- [ ] Run `make_budgets.py` and record the actual Protocol B budgets
 
 ### Phase 2 — Arm 1, the density curve  *(1–2 weeks of GPU)*
 
@@ -115,7 +121,7 @@ zero unlabelled. Full synthetic smoke test passes end to end.
 
 ## 4. Recommended changes
 
-### R1 — Use the official test split. It has labels.  *(high impact, low cost)*
+### R1 — DONE: use the official split  *(implemented in `splits.py`)*
 
 `PROTOCOL.md` builds a held-out set from train+val because it believes the test
 labels are withheld. They are not: 300 test videos with frame-level annotation
@@ -129,49 +135,101 @@ would be dominated by long, *video-level-labelled* train videos, so you would be
 scoring frame-level predictions against whole-video labels and calling it test
 accuracy.
 
+There is a second, stronger reason that only emerged from R2: the two regimes
+are not interchangeable. Train is 434 trimmed clips with zero label
+transitions; val and test are sweeps. Pooling and redrawing puts trimmed clips
+into the test set, where they are trivially easy — one stable anatomy, one
+label, no transition to get wrong — and the reported score becomes a
+seed-dependent weighted average over two populations. The regrouped scheme on
+seed 0 yields a test set of 95 trimmed clips and 60 sweeps, which is not a
+measurement of anything in particular.
+
+`splits.py --scheme official` is now the default. The old behaviour survives as
+`--scheme regrouped` for sensitivity analysis, and warns when it mixes regimes.
+
 Caveat to state plainly: 40 validation videos is thin for threshold selection
 and smoother tuning. Prefer **grouped 5-fold cross-validation over train** for
-tuning, with val folded in, and touch test exactly once per condition.
+tuning, with val folded in, and touch test exactly once per condition. That is
+not yet implemented.
 
-### R2 — Confront the weak-label problem head-on. It is a feature.  *(high impact)*
+### R2 — DECIDED: train frame-wise. The labels are real; the *transitions* are missing.  *(resolved 2026-09-02)*
 
-Train labels are one-per-video; val and test are per-frame (audit S2). The
-current protocol implicitly treats train labels as frame-level, which is wrong
-and would quietly cap performance while making the density curve
-uninterpretable — at k=1 you draw one frame carrying a bag label, at k=all you
-draw 778 frames all carrying the *same* bag label.
+I previously ranked multiple-instance learning first here, on the reading that
+whole-video `ALL`/`NONE` labels were bag labels over noisy positives. **The
+dataset's own segmentation annotations disprove that reading**, so the decision
+goes the other way.
 
-Three options, in order of my preference:
+**Evidence** (full working in audit S2): segmentation masks exist for exactly
+the 266 `ALL` videos and no others; they sit at ~10 frames spanning 10–98% of
+each clip; all 2,575 annotated frames yield a measurable angle of progression;
+and AoP drifts by a median of 5.2° within a video. You cannot segment the pubic
+symphysis and fetal head, or measure AoP, on a frame that is not a standard
+plane. The annotators found the plane held across the whole clip because these
+are **trimmed standard-plane clips**, not sweeps that happen to contain one.
 
-1. **Multiple-instance learning.** Treat each train video as a bag: a positive
-   bag contains ≥1 standard plane, a negative bag contains none. Train with an
-   attention-MIL or noisy-OR pooled head. This is the *correct* model of the
-   label generating process, and it is a genuine methodological contribution on
-   top of the density question.
-2. **Frame-level with noisy positives**, plus co-teaching or a small-loss filter
-   to down-weight frames in positive bags the model is confident are
-   non-standard.
-3. **Naive frame-level** (the current implicit choice), reported as a baseline
-   for options 1–2 rather than as the main result.
+**Decision: option 3 — ordinary frame-wise supervision.** No MIL, no
+noisy-label correction. MIL would model a noise process that is not there and
+would discard genuine per-frame labels in exchange for one bag label per video;
+co-teaching would down-weight frames that are correctly labelled. Both would
+cost accuracy and add a confound to a study whose independent variable is
+sampling density.
 
-Whichever you pick, **the density curve must be re-interpreted**: with bag
-labels, sampling more frames per video adds *label noise* as well as data. That
-is itself an interesting result — say so rather than hiding it.
+**What replaces the weak-label problem is worse, and it lands on Arm 2.** No
+training video contains a single label transition (0.00 per video, against 0.93
+in val and 1.35 in test). A BiLSTM trained there reaches zero training loss by
+ignoring time and emitting one constant per clip — it never sees the event a
+temporal model exists to model. The smoothed-CNN baseline meanwhile has its
+window and Viterbi `p_stay` tuned on validation, which does contain
+transitions. Run as specified, Arm 2 would measure the split rather than the
+architecture, and the LSTM would lose for the wrong reason.
 
-I would also add a condition the current design lacks: **train on val's
-frame-level labels only** (2,870 clean frames from 40 videos) and compare
-against 44,751 noisy frames from 434 videos. That is a clean label-quality-
-versus-quantity axis, it costs almost no GPU time, and it sharpens the same
-argument the paper is already making.
+Three ways forward, in order of preference:
 
-### R3 — Recalibrate everything written against a 17% prior  *(low cost, do now)*
+1. **Splice transitions into training.** Concatenate a positive clip with a
+   negative clip from the *same* video's neighbours to synthesise the
+   into-plane/out-of-plane boundary. This is honest augmentation — it mimics
+   the probe moving off plane, which is exactly what a sweep does — and it is
+   the only option that gives the temporal arm the signal it needs while
+   keeping the official split. Report the splice rate as a hyperparameter.
+2. **Train the temporal arm on val's sweeps** (37 mixed videos, median run 33
+   frames), tune on a held-out slice of it, and test on test. Honest, but 37
+   videos is very thin and the frame-wise and temporal arms would then be
+   trained on different data — which breaks the "one protocol, one variable"
+   discipline the rest of the study depends on.
+3. **Report the negative result as a property of the corpus.** "The IUGC train
+   split cannot teach temporal transitions, so no temporal architecture can be
+   evaluated fairly on it" is a true and useful statement, and cheap. It is
+   weaker than (1) because it forecloses the measurement rather than making it.
 
-The real positive rate is 0.556 (audit S3). `stratum()` in `src/splits.py`
-buckets at 0 / <0.10 / <0.30 / ≥0.30 and would place nearly every video in the
-top bucket, so stratification silently stops doing anything. Rebucket on
-quartiles of the observed distribution. Inverse-frequency weighting is now close
-to a no-op — keep it for consistency across conditions, but stop citing
-imbalance as a headline difficulty.
+Arm 1 is unaffected in mechanism, but its *interpretation* shifts: within a
+positive training video every frame shares one label and the anatomy is
+near-static, so raising density adds redundant views of a single plane rather
+than label diversity. The density curve is a **redundancy curve** — say so in
+the paper, because a reviewer who works out the trimming will otherwise
+conclude you missed it.
+
+The extra condition proposed earlier — train on val's frame-level labels only —
+is still worth running, and now for a sharper reason than label quality: it is
+the only condition in which the frame-wise arm sees transitions at all.
+
+### R3 — PARTLY DONE: recalibrate against the real prior
+
+The real positive rate is 0.442 pooled, 0.556 on test (audit S3). The old
+`stratum()` in `src/splits.py` cut at 0 / <0.10 / <0.30 / ≥0.30 — fixed points
+chosen for an assumed ~17% prior — so nearly every video fell in the top bucket
+and stratification silently stopped doing anything.
+
+**Done:** `make_strata()` now derives buckets from the data. All-negative and
+all-positive videos get their own strata (they are qualitatively different: a
+video with no standard plane cannot contribute a positive to any fold) and the
+interior is cut at quantiles, with under-populated strata merged into their
+neighbour so the fold constraint stays satisfiable. On the real index this
+yields `{none: 168, mixed0: 78, mixed1: 72, mixed2: 77, mixed3: 73, all: 306}`
+instead of one bucket holding everything.
+
+**Still to do:** inverse-frequency weighting is now close to a no-op — keep it
+for consistency across conditions, but stop citing imbalance as a headline
+difficulty, and rewrite the affected prose in `PROTOCOL.md`.
 
 ### R4 — Make the pipeline fail loudly  *(done for `build_index`; extend outward)*
 
@@ -243,6 +301,65 @@ Prepare the leave-one-centre-out split now as well, so it is ready if needed.
       `unpack_dataset.py` into `tools/` — they are one-off scaffolding and
       currently sit alongside the pipeline as though they were part of it
 
+### R9 — NEW: the class prior is confounded with the density axis  *(found while validating R1–R3; high impact)*
+
+Building every condition against the real split exposes a step change in the
+training class prior at exactly the sparse/dense boundary:
+
+| condition | frames | pos-rate |
+|---|---:|---:|
+| `sparse_k1` … `sparse_k20` | 434 → 8,638 | **0.613** (flat) |
+| `dense_stride8` … `dense_all` | 6,840 → 53,996 | **0.415** (flat) |
+| `dense_matched_k5` | 2,305 | 0.548 |
+| `dense_matched_k20` | 9,220 | 0.418 |
+
+The cause is structural, not a bug. Per-video sampling weights every video
+equally, so the prior is just 266/434 = 0.613. Dense sampling weights by video
+length, and the trimmed positive clips are shorter (median 80 frames) than the
+negative ones (median 96, mean 187), so the long negatives dominate. Density and
+class prior therefore move together across the entire independent variable, and
+Protocol B does not escape it either: `dense_matched_k5` sits at 0.548 against
+`sparse_k5`'s 0.613.
+
+`PROTOCOL.md` anticipates a version of this and answers it with identical
+inverse-frequency weighting everywhere. That is not sufficient here. Identical
+weighting rebalances *within* each condition; it does not make two conditions
+with different priors comparable, because the reweighted losses are still
+computed over different underlying distributions and the decision threshold that
+weighting implies differs between them.
+
+Recommended fix, cheap and decisive: add a **prior-matched** variant of the
+dense arm that subsamples negatives until its positive rate equals the sparse
+arm's 0.613, and report it beside the existing budget-matched arm. The 2×2 then
+becomes a 2×3, and the three-way reading is clean:
+
+| A (natural) | B (budget-matched) | B′ (budget- *and* prior-matched) | conclusion |
+|---|---|---|---|
+| dense wins | dense wins | dense wins | density carries real information |
+| dense wins | dense wins | tie | the gain was the class prior, not density |
+| dense wins | dense loses | — | the gain was sample count |
+
+Without B′, a reviewer can attribute any dense-arm advantage to its different
+class balance, and the paper has no answer.
+
+### R10 — NEW: `sparse_k1_curated` no longer tests anything  *(drop it)*
+
+The curated condition exists to mimic how a sonographer builds an image dataset:
+freeze at the temporal centre of a standard-plane run, which yields a
+positive-enriched set (~76% in the original simulation against ~17% for uniform).
+
+That depends on runs existing. In the official train split there are none — every
+positive video is one unbroken standard-plane clip (R2). Measured on the real
+data, `sparse_k1_curated` and `sparse_k1` produce **identical class balance
+(0.6129 both)** and share 44% of their exact frames; they differ only in which
+arbitrary frame gets picked from a video where every frame carries the same
+label.
+
+Drop it from the grid, or redefine it against the sweep-structured val/test
+videos where runs do exist. Keeping it as-is spends GPU time on a condition
+whose defining property the data cannot express — and reporting it as a
+"realism check" would misdescribe what was measured.
+
 ---
 
 ## 5. Risk register
@@ -251,7 +368,9 @@ Prepare the leave-one-centre-out split now as well, so it is ready if needed.
 |---|---|---|---|
 | Silent label mis-join | **Occurred** | Every number wrong, no error raised | R4 assertions |
 | Shortcut learning on scanner identity | Medium | Density result measures the wrong thing | R6, run early |
-| Weak train labels read as frame labels | **Occurred in design** | Density curve uninterpretable | R2 |
+| Train split contains no label transitions | **Confirmed** | Arm 2 measures the split, not the architecture | R2 remedy, blocks Phase 3 |
+| Density curve read as information gain when it is redundancy | High | Overclaimed conclusion | R2, state it in the paper |
 | 40-video val set overfits threshold/smoother | Medium | Optimistic test numbers | R1 cross-validation |
 | GPU budget overrun (30–40 GPU-h) | Medium | Unfinished grid | `RUNBOOK.md` Part 11 cut order |
 | Comparing runs across pipeline versions | High | Irreproducible headline table | R5 hashes |
+| Class prior moves with the density axis | **Confirmed** | Dense-arm gain attributable to class balance | R9 prior-matched arm |

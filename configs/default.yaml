@@ -90,9 +90,9 @@ conditions:
   # budget values are placeholders; make_budgets.py fills in the real ones.
   - name: dense_matched_k5
     k: null
-    budget: 2305
+    budget: 2170
     budget_unit: video
   - name: dense_matched_k20
     k: null
-    budget: 9220
+    budget: 8638
     budget_unit: video

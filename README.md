@@ -9,12 +9,12 @@ classification, on the IUGC 2024 dataset
 > **65,531 frames / 774 videos, label join rate 1.0000, zero unlabelled.** No
 > training run has happened yet.
 >
-> Before running anything, note that three assumptions in `PROTOCOL.md` are
-> false for this dataset release — the official test labels *are* public, the
-> training labels are video-level rather than per-frame, and the positive rate
-> is ~0.44, not ~0.17. Each changes the experiment. See
-> **[`ROADMAP.md`](ROADMAP.md)** for the plan and
-> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
+> Splits use the dataset's own train/val/test folders (`--scheme official`).
+> Several assumptions in `PROTOCOL.md` are false for this release — the official
+> test labels *are* public, the positive rate is ~0.44 rather than ~0.17, and
+> **the training split contains no label transitions at all**, which blocks Arm 2
+> until the R2 remedy is chosen. See **[`ROADMAP.md`](ROADMAP.md)** for the plan
+> and **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
 
 Read **`PROTOCOL.md`** first. It contains the experimental design, one design
 problem in the current abstract that needs fixing before you run anything, and
@@ -35,7 +35,7 @@ unzip DatasetV3.zip -d DatasetV3 && cd ..
 ```bash
 python -m src.extract_frames --dataset-root data/DatasetV3 --out-dir data/frames
 python -m src.build_index    --dataset-root data/DatasetV3 --frames-dir data/frames --out data/index.csv
-python -m src.splits         --index data/index.csv --out data/splits.json --seed 0
+python -m src.splits         --index data/index.csv --out data/splits.json --scheme official
 python -m src.make_budgets   --config configs/default.yaml --write
 
 python -m src.run_experiment --condition sparse_k1  --model frame    --seed 0
@@ -64,7 +64,7 @@ every number downstream, and it has already happened once (see the audit).
 |---|---|
 | `src/extract_frames.py` | mp4 → pre-resized JPEGs (decode once, not once per epoch) |
 | `src/build_index.py` | one frame-level index CSV; auto-detects label columns and reports the join |
-| `src/splits.py` | **video-level** splits with anti-leakage assertions |
+| `src/splits.py` | **video-level** splits, official by default; reports label-transition structure |
 | `src/sampling.py` | the study's independent variable: k-frames-per-video, stride, budget matching |
 | `src/datasets.py` | frame and clip datasets; ultrasound-appropriate augmentation |
 | `src/models.py` | one shared encoder, two heads |

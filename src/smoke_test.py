@@ -190,13 +190,26 @@ def run_synthetic(keep: bool = False) -> int:
             _check(lab.label.isin([0, 1]).all(), "labels are 0/1", failures)
 
         print("\n3. splits")
+        # The fixture writes everything into one folder, so there is no
+        # official train/val/test to honour -- regrouped is the only scheme
+        # that applies. The real study uses --scheme official; see splits.py.
         r = subprocess.run(
             [sys.executable, "-m", "src.splits", "--index", str(root / "index.csv"),
-             "--out", str(root / "splits.json"), "--test-frac", "0.3",
-             "--val-frac", "0.3"], capture_output=True, text=True)
+             "--out", str(root / "splits.json"), "--scheme", "regrouped",
+             "--test-frac", "0.3", "--val-frac", "0.3"],
+            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stdout[-2000:], r.stderr[-2000:])
         _check(r.returncode == 0, "splits ran (leakage assertions passed)", failures)
+
+        # A single-folder index must be refused by the official scheme rather
+        # than silently producing an empty val/test.
+        r_off = subprocess.run(
+            [sys.executable, "-m", "src.splits", "--index", str(root / "index.csv"),
+             "--out", str(root / "splits_official.json"), "--scheme", "official"],
+            capture_output=True, text=True)
+        _check(r_off.returncode != 0,
+               "official scheme refuses a single-folder index", failures)
 
         if (root / "splits.json").exists():
             from .splits import load_splits
