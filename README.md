@@ -17,8 +17,16 @@ classification, on the IUGC 2024 dataset
 > Several assumptions in `PROTOCOL.md` are false for this dataset release — the
 > official test labels *are* public, the positive rate is ~0.44 rather than
 > ~0.17, and the training split has **zero label transitions**. Each changes
-> the experiment. See **[`ROADMAP.md`](ROADMAP.md)** for the decisions and
-> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
+> the experiment. See **[`ROADMAP.md`](ROADMAP.md)** for the decisions,
+> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence, and
+> **[`docs/RESULTS.md`](docs/RESULTS.md)** for what the runs show so far.
+
+**Headline, seed 0:** frame density buys nothing — the best result in the study
+comes from 434 training frames, one per video — and the dense arm loses all four
+matched-budget comparisons. The temporal arm beats the frame-wise arm including
+its smoothed baseline, but an ablation shows splicing is not what produced that.
+Repeat seeds are running; the within-arm spread is currently as large as the
+between-arm gaps, so this is a direction, not yet a claim.
 
 Read **`PROTOCOL.md`** first. It contains the experimental design, one design
 problem in the current abstract that needs fixing before you run anything, and

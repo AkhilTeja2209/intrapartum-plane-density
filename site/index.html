@@ -147,9 +147,41 @@
     0.83–0.96 the protocol anticipated from simulation. That is the
     train/test shift doing its work — the model is trained on trimmed clips
     where the plane is held throughout, and tested on sweeps that move in and
-    out of plane. Post-hoc smoothing, expected to be a strong baseline,
-    <em>hurt</em> in every condition, because the test videos have short runs
-    (median 12 frames) and the tuned filter over-smooths them.
+    out of plane.
+  </p>
+  <p>
+    Post-hoc smoothing, expected to be a strong baseline, <em>hurt</em> in 12
+    of the 13 conditions. The smoother is tuned on validation, where
+    standard-plane runs are long (median 33 frames), then applied to test,
+    where they are short (median 12). A filter tuned on the wrong run-length
+    distribution over-smooths.
+  </p>
+
+  <h3>Does temporal context help?</h3>
+  <p>
+    The second arm puts a BiLSTM on the same encoder, trained on the same
+    <code>dense_all</code> frames. The training split contains no label
+    transitions at all, so transitions were synthesised by splicing positive
+    and negative clips together — otherwise the temporal model never observes
+    the one event it exists to model.
+  </p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>model on <code>dense_all</code></th><th>macro-F1</th><th>95% CI</th></tr></thead>
+    <tbody>
+      <tr><td>frame-wise, raw</td><td>0.5785</td><td>0.548 – 0.607</td></tr>
+      <tr><td>frame-wise, smoothed</td><td>0.5453</td><td>—</td></tr>
+      <tr><td>BiLSTM, splicing off</td><td>0.6496</td><td>0.624 – 0.676</td></tr>
+      <tr><td>BiLSTM, splicing on</td><td>0.6695</td><td>0.642 – 0.698</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    The temporal arm wins, and it beats the smoothed baseline the protocol
+    expected to be hard to beat. <strong>But splicing is not what produced
+    that.</strong> The unspliced model — which cannot have learned transitions,
+    because its training windows contain none — reaches 0.6496, and the
+    intervals overlap heavily. So whatever the temporal head contributes here,
+    it is not transition modelling; most likely it is the sliding-window logit
+    averaging at inference, which is itself a form of smoothing.
   </p>
 </section>
 
