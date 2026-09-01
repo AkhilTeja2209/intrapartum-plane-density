@@ -7,7 +7,7 @@ paths:
 
 data:
   img_size: 224
-  workers: 4
+  workers: 3
   # temporal arm only
   clip_len: 16          # ~0.5-0.6 s of real time at typical US frame rates
   clip_stride: 8        # 50% overlap between training windows

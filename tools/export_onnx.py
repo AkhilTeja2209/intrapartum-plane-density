@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -146,19 +145,34 @@ def main() -> int:
     (out_dir / "model_meta.json").write_text(json.dumps(meta, indent=2))
     print(f"wrote {out_dir / 'model_meta.json'}")
 
-    # a few real example frames for the demo's "try one" buttons
+    # A few real test frames for the demo's "try one" buttons, re-encoded as
+    # PNG. The frames on disk are JPEG, and browser and PIL JPEG decoders
+    # disagree by up to one 8-bit level on some pixels -- enough to move the
+    # output probability by ~0.04 on a borderline frame. PNG is lossless, so
+    # the built-in examples reproduce the PyTorch reference exactly. Uploaded
+    # JPEGs keep the decoder difference; the page says so.
+    from PIL import Image
+
     ex_dir = out_dir.parent / "examples"
     ex_dir.mkdir(parents=True, exist_ok=True)
+    for stale in ex_dir.glob("*.jpg"):
+        stale.unlink()
     manifest = []
     for lab, tag in ((1, "standard"), (0, "nonstandard")):
         pick = test_df[test_df.label == lab]
         for j, i in enumerate(np.linspace(0, len(pick) - 1, 2).astype(int)):
             r = pick.iloc[int(i)]
             src = ROOT / a.frames_dir / r.frame_path
-            dst = ex_dir / f"{tag}_{j}.jpg"
-            shutil.copyfile(src, dst)
+            dst = ex_dir / f"{tag}_{j}.png"
+            Image.open(src).convert("L").save(dst, format="PNG", optimize=True)
+
+            # Record the reference probability so the page can be checked
+            # against PyTorch rather than trusted.
+            with torch.no_grad():
+                x = ds.tf(Image.open(dst).convert("L")).unsqueeze(0)
+                ref = float(torch.softmax(model(x), 1)[0, 1])
             manifest.append({"file": f"examples/{dst.name}", "label": int(lab),
-                             "label_name": tag})
+                             "label_name": tag, "reference_prob": round(ref, 6)})
     (ex_dir / "examples.json").write_text(json.dumps(manifest, indent=2))
     print(f"wrote {len(manifest)} example frames to {ex_dir}")
     return 0

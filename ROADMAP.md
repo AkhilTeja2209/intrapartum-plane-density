@@ -89,9 +89,9 @@ zero unlabelled. Full synthetic smoke test passes end to end.
 - [x] **R2** Train weak-label strategy decided: **frame-wise supervision**, no MIL. The labels are literal; what is missing is label *transitions* in train
 - [x] **R3** `make_strata()` derives buckets from the data instead of assuming a 17% prior
 - [x] Protocol B budgets computed against the real split and written to `configs/default.yaml` (2,170 and 8,638)
-- [ ] **R9** Add the prior-matched dense arm — the class prior moves with the density axis (0.613 sparse vs 0.415 dense)
-- [ ] **R10** Drop or redefine `sparse_k1_curated`; it is now a duplicate of `sparse_k1`
-- [ ] Choose the Arm 2 remedy from R2 (splice / train-on-val / report-and-stop) — blocks Phase 3, not Phase 2
+- [x] **R9** Prior-matched dense arms added (`dense_prior_matched_k5/k20`), landing on 0.6129 exactly
+- [x] **R10** `sparse_k1_curated` dropped — it duplicated `sparse_k1`
+- [x] Arm 2 remedy chosen and built: **splicing**
 - [ ] Rewrite the affected passages of `PROTOCOL.md` — it still asserts three things about the data that are false
 - [ ] Run `make_budgets.py` and record the actual Protocol B budgets
 
@@ -152,7 +152,7 @@ and smoother tuning. Prefer **grouped 5-fold cross-validation over train** for
 tuning, with val folded in, and touch test exactly once per condition. That is
 not yet implemented.
 
-### R2 — DECIDED: train frame-wise. The labels are real; the *transitions* are missing.  *(resolved 2026-09-02)*
+### R2 — DECIDED and IMPLEMENTED: frame-wise supervision; transitions spliced for Arm 2
 
 I previously ranked multiple-instance learning first here, on the reading that
 whole-video `ALL`/`NONE` labels were bag labels over noisy positives. **The
@@ -183,7 +183,23 @@ window and Viterbi `p_stay` tuned on validation, which does contain
 transitions. Run as specified, Arm 2 would measure the split rather than the
 architecture, and the LSTM would lose for the wrong reason.
 
-Three ways forward, in order of preference:
+**Chosen: option 1, splicing.** Implemented in `SplicedClipDataset`
+(`src/datasets.py`). Verified on the real training split: 0% of ordinary
+training clips contain a label transition, 100% of spliced ones do. Partners
+are drawn from the same acquisition session where one exists — 42 of 144
+sessions hold both classes, covering 232 of 434 train videos — so the join
+shares patient, probe and gain rather than cutting between unrelated
+recordings. `splice_p` (default 0.5) is a reported hyperparameter and
+`splice_p: 0.0` recovers the unspliced ablation.
+
+The limitation has to be stated in the paper rather than buried: a spliced
+boundary is a hard cut, and a probe moving off plane passes through genuinely
+ambiguous intermediate frames that no splice reproduces. So splicing teaches a
+temporal model *that* labels change and roughly how long runs last — which is
+the same prior the smoothing baseline gets for free — without teaching it what
+a real transition looks like. It makes Arm 2 measurable, not realistic.
+
+The three options as originally weighed:
 
 1. **Splice transitions into training.** Concatenate a positive clip with a
    negative clip from the *same* video's neighbours to synthesise the
@@ -293,15 +309,14 @@ Prepare the leave-one-centre-out split now as well, so it is ready if needed.
 
 - [x] `.gitignore` covering `data/`, checkpoints and the 1.1 GB zip
 - [ ] Pin exact versions in `requirements.txt` (`>=` will not reproduce in 2027)
-- [ ] CI running `python -m src.smoke_test --synthetic` on every push — the smoke
-      test exists and nothing runs it automatically
+- [x] CI running `python -m src.smoke_test --synthetic` on every push
 - [ ] `CITATION.cff`, and dataset attribution under CC-BY-4.0
 - [ ] Log seed, git SHA and full resolved config into every results file
 - [ ] Move `inspect_labels.py`, `inspect_zip.py`, `setup_project.py` and
       `unpack_dataset.py` into `tools/` — they are one-off scaffolding and
       currently sit alongside the pipeline as though they were part of it
 
-### R9 — NEW: the class prior is confounded with the density axis  *(found while validating R1–R3; high impact)*
+### R9 — IMPLEMENTED: the class prior is confounded with the density axis
 
 Building every condition against the real split exposes a step change in the
 training class prior at exactly the sparse/dense boundary:
@@ -328,9 +343,9 @@ with different priors comparable, because the reweighted losses are still
 computed over different underlying distributions and the decision threshold that
 weighting implies differs between them.
 
-Recommended fix, cheap and decisive: add a **prior-matched** variant of the
-dense arm that subsamples negatives until its positive rate equals the sparse
-arm's 0.613, and report it beside the existing budget-matched arm. The 2×2 then
+**Done.** `match_budget_and_prior()` adds a prior-matched variant of the dense
+arm that holds the positive rate at the sparse arm's 0.613 while keeping the
+frame budget, reported beside the existing budget-matched arm. The 2×2 then
 becomes a 2×3, and the three-way reading is clean:
 
 | A (natural) | B (budget-matched) | B′ (budget- *and* prior-matched) | conclusion |
@@ -342,7 +357,7 @@ becomes a 2×3, and the three-way reading is clean:
 Without B′, a reviewer can attribute any dense-arm advantage to its different
 class balance, and the paper has no answer.
 
-### R10 — NEW: `sparse_k1_curated` no longer tests anything  *(drop it)*
+### R10 — DONE: `sparse_k1_curated` no longer tests anything
 
 The curated condition exists to mimic how a sonographer builds an image dataset:
 freeze at the temporal centre of a standard-plane run, which yields a
@@ -359,6 +374,27 @@ Drop it from the grid, or redefine it against the sweep-structured val/test
 videos where runs do exist. Keeping it as-is spends GPU time on a condition
 whose defining property the data cannot express — and reporting it as a
 "realism check" would misdescribe what was measured.
+
+### R11 — NEW: the browser demo must not drift from the model it serves
+
+The GitHub Pages demo runs the exported ResNet-18 client-side. Two failure
+modes matter, and both are silent:
+
+1. **ONNX diverging from PyTorch.** `tools/export_onnx.py` compares the two on
+   256 real test frames and deletes the export rather than shipping a graph
+   that disagrees. Measured: max logit difference 1.0e-4, decision agreement
+   100%.
+2. **Preprocessing diverging in JavaScript.** Canvas `drawImage()` scaling is
+   implementation-defined; measured against torchvision it moved the output
+   probability by 0.041 on a real frame. The page therefore reimplements
+   Pillow's `ImagingResample` bilinear geometry directly, which reproduces it
+   to within one 8-bit level on ~0.15% of pixels. Every preprocessing constant
+   is read from `model_meta.json`, written at export time, so the page cannot
+   drift from the checkpoint.
+
+`examples.json` carries the PyTorch reference probability for each built-in
+example, so the deployed page can be checked against the reference rather than
+trusted.
 
 ---
 

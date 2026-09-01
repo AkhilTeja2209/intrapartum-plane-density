@@ -5,16 +5,20 @@ classification, on the IUGC 2024 dataset
 ([Zenodo 10.5281/zenodo.17655183](https://zenodo.org/records/17655183),
 774 videos / 68,106 frames / 1.1 GB, CC-BY-4.0).
 
-> **Status — read this first.** Data preparation is done and verified:
-> **65,531 frames / 774 videos, label join rate 1.0000, zero unlabelled.** No
-> training run has happened yet.
+> **[▶ Live demo](https://akhilteja2209.github.io/intrapartum-plane-density/)** —
+> drop in an ultrasound frame and the trained ResNet-18 scores it in your
+> browser. Nothing is uploaded. **Research demo, not a medical device.**
+
+> **Status.** Data preparation is done and verified: 65,531 frames / 774
+> videos, label join rate 1.0000, zero unlabelled. The Arm 1 density grid runs
+> on the official split. Arm 2 uses spliced transitions, because the training
+> split contains none (see below).
 >
-> Splits use the dataset's own train/val/test folders (`--scheme official`).
-> Several assumptions in `PROTOCOL.md` are false for this release — the official
-> test labels *are* public, the positive rate is ~0.44 rather than ~0.17, and
-> **the training split contains no label transitions at all**, which blocks Arm 2
-> until the R2 remedy is chosen. See **[`ROADMAP.md`](ROADMAP.md)** for the plan
-> and **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
+> Several assumptions in `PROTOCOL.md` are false for this dataset release — the
+> official test labels *are* public, the positive rate is ~0.44 rather than
+> ~0.17, and the training split has **zero label transitions**. Each changes
+> the experiment. See **[`ROADMAP.md`](ROADMAP.md)** for the decisions and
+> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence.
 
 Read **`PROTOCOL.md`** first. It contains the experimental design, one design
 problem in the current abstract that needs fixing before you run anything, and
@@ -74,6 +78,10 @@ every number downstream, and it has already happened once (see the audit).
 | `src/run_experiment.py` | one condition × one seed, end to end |
 | `src/analyze.py` | summary tables, density curve, paired bootstrap tests |
 | `src/gradcam.py` | quantitative check that the model looks at anatomy |
+| `tools/run_grid.py` | runs a condition grid, cheapest-first, resumable |
+| `tools/export_onnx.py` | exports a checkpoint for the browser demo; refuses to ship a divergent graph |
+| `tools/make_site_summary.py` | collects results into the table the demo renders |
+| `site/` | the static GitHub Pages demo (client-side inference) |
 
 ## Compute
 

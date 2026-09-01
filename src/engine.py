@@ -176,6 +176,18 @@ def fit(model, train_loader, val_loader, val_df, cfg, device, temporal,
 
 
 def make_loader(ds, batch_size, shuffle, workers=4, pin=True):
+    """Build a DataLoader.
+
+    `persistent_workers` is kept only for the training loader. A run builds
+    three loaders, and persisting all of them held 3 x workers processes alive
+    for the whole run, each carrying its own copy of the index frame and its
+    own shared-memory segments. On Windows that exhausted the commit limit
+    mid-run (`Couldn't open shared file mapping ... error code: 1455`) and
+    killed the job after training had already finished. The evaluation loaders
+    are each iterated a handful of times, so respawning their workers costs
+    little and the memory goes back to the OS in between.
+    """
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
                       num_workers=workers, pin_memory=pin,
-                      drop_last=False, persistent_workers=workers > 0)
+                      drop_last=False,
+                      persistent_workers=bool(shuffle) and workers > 0)
