@@ -1,0 +1,26 @@
+[
+  {
+    "file": "examples/standard_0.png",
+    "label": 1,
+    "label_name": "standard",
+    "reference_prob": 0.64555
+  },
+  {
+    "file": "examples/standard_1.png",
+    "label": 1,
+    "label_name": "standard",
+    "reference_prob": 0.987384
+  },
+  {
+    "file": "examples/nonstandard_0.png",
+    "label": 0,
+    "label_name": "nonstandard",
+    "reference_prob": 0.03568
+  },
+  {
+    "file": "examples/nonstandard_1.png",
+    "label": 0,
+    "label_name": "nonstandard",
+    "reference_prob": 0.07105
+  }
+]

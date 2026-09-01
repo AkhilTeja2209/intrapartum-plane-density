@@ -1,0 +1,47 @@
+{
+  "run": "sparse_k1__frame__seed0",
+  "condition": "sparse_k1",
+  "seed": 0,
+  "arch": "resnet18",
+  "img_size": 224,
+  "resize_short_side": 255,
+  "mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "grayscale": true,
+  "threshold": 0.16,
+  "onnx_mb": 44.7,
+  "test_metrics": {
+    "macro_f1": 0.6872112021541446,
+    "balanced_accuracy": 0.694476714788333,
+    "auprc": 0.837278042437556,
+    "auroc": 0.8355803314088768,
+    "mcc": 0.4743773888380782,
+    "accuracy": 0.7247547605308713,
+    "top1_frame_precision": 0.8833333333333333,
+    "recall_standard": 0.9624637080049772,
+    "precision_standard": 0.6780131482834185,
+    "specificity": 0.4264897215716888,
+    "n": 8665,
+    "prevalence": 0.5564916330063474
+  },
+  "test_macro_f1_ci95": [
+    0.6599347020722024,
+    0.7147990085739175
+  ],
+  "train_stats": {
+    "n_frames": 434,
+    "n_videos": 434,
+    "pos_rate": 0.6129032258064516,
+    "frames_per_video_median": 1.0
+  },
+  "dataset": "IUGC 2024 (Zenodo 10.5281/zenodo.17655183), CC-BY-4.0",
+  "split": "official train/val/test"
+}

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intrapartum Standard-Plane Classifier — research demo</title>
+<meta name="description" content="Research demo: a ResNet-18 trained on the IUGC 2024 intrapartum ultrasound dataset, running in your browser. Not a medical device.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫀</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="banner" role="alert">
+  <strong>Research demo — not a medical device.</strong>
+  This model was trained for a methods study on frame sampling. It is
+  <em>not</em> validated for clinical use, must not inform any care decision,
+  and will produce confident output on images it has never seen the like of.
+</div>
+
+<header class="wrap">
+  <h1>Standard-plane classification in intrapartum ultrasound</h1>
+  <p class="sub">
+    A ResNet-18 that scores a transperineal ultrasound frame for whether the
+    pubic symphysis and fetal head are both resolved well enough to measure
+    angle&nbsp;of&nbsp;progression. It runs entirely in your browser — the
+    image never leaves your device.
+  </p>
+  <p class="meta" id="model-line">Loading model…</p>
+</header>
+
+<main class="wrap">
+
+<section class="card" id="demo">
+  <h2>Try it</h2>
+
+  <div id="drop" class="drop" tabindex="0" role="button"
+       aria-label="Choose or drop an ultrasound image">
+    <input type="file" id="file" accept="image/*" hidden>
+    <div class="drop-inner">
+      <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
+        <path d="M12 16V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <p><strong>Drop an image</strong> or click to choose</p>
+      <p class="hint">JPEG or PNG. Nothing is uploaded.</p>
+    </div>
+  </div>
+
+  <div class="examples">
+    <span class="hint">Or try a held-out test frame:</span>
+    <div id="example-buttons"></div>
+  </div>
+
+  <div id="result" class="result" hidden>
+    <div class="result-grid">
+      <figure class="preview">
+        <canvas id="preview" width="224" height="224"></canvas>
+        <figcaption>what the model sees — 224&times;224, greyscale</figcaption>
+      </figure>
+      <div class="verdict">
+        <p class="verdict-label" id="verdict">—</p>
+        <div class="gauge"><div class="gauge-fill" id="gauge"></div>
+          <div class="gauge-thr" id="gauge-thr" title="decision threshold"></div>
+        </div>
+        <p class="prob"><span id="prob">—</span>
+          <span class="hint">probability this frame is a standard plane</span></p>
+        <p class="hint" id="thr-line"></p>
+        <p class="truth hint" id="truth" hidden></p>
+      </div>
+    </div>
+  </div>
+  <p id="status" class="status" role="status"></p>
+</section>
+
+<section class="card">
+  <h2>What the number means</h2>
+  <p>
+    A <strong>standard plane</strong> here is a mid-sagittal transperineal view
+    in which the pubic symphysis is fully visible along its long axis
+    <em>and</em> the fetal skull contour is resolved — the condition for
+    measuring angle of progression or head–symphysis distance. Frames that are
+    off-midline, blurred by probe transition, or showing only one of the two
+    structures are non-standard.
+  </p>
+  <p>
+    The threshold is not 0.5. It was chosen on the validation split to maximise
+    macro-F1 and then frozen before the test split was touched, which is why it
+    sits where it does.
+  </p>
+  <div class="warn">
+    <p><strong>Where this model will mislead you.</strong> It was trained only
+    on third-trimester intrapartum transperineal video from three hospitals. On
+    a first-trimester scan, a transabdominal view, a different probe, or any
+    non-ultrasound image, it still returns a confident number — that number is
+    meaningless. There is no "out of distribution" output.</p>
+  </div>
+</section>
+
+<section class="card">
+  <h2>The study behind it</h2>
+  <p>
+    Published work reports that models trained on dense video frames beat models
+    trained on curated still-image datasets, and reads that as evidence that
+    video data is richer. The dense arm also has far more training samples, and
+    the two explanations have not been separated.
+  </p>
+  <p>
+    This project separates them by building both arms from one corpus, varying
+    only how many frames are drawn per video, so probe, anatomy, scanners,
+    annotators and label definition are constant by construction. A
+    matched-budget arm then caps the dense arm to the sparse arm's exact frame
+    count, and a prior-matched arm additionally holds the class balance fixed.
+  </p>
+  <div id="curve-block">
+    <h3>Density curve</h3>
+    <p class="hint">Test macro-F1 against the number of training frames.
+      Every point is scored on the identical complete 8,665-frame test set,
+      seed 0.</p>
+    <div class="tablewrap"><table id="curve"><tbody></tbody></table></div>
+  </div>
+
+  <h3>What it shows so far</h3>
+  <p>
+    Training on 124&times; more frames does not help. The sparse arm spans
+    0.588–0.687 macro-F1 across 434 to 8,638 frames with no trend; the dense
+    arm spans 0.506–0.637 across 6,840 to 53,996 frames, also with no trend,
+    and does not beat the sparse arm even in Protocol A — the comparison the
+    literature reports as a win for video.
+  </p>
+  <p>
+    Under matched budget the dense arm <em>loses</em> all four times, and
+    holding the class prior fixed as well does not rescue it. The dense
+    matched arm sees roughly 20–25 distinct patients against the sparse arm's
+    434, which points at patient diversity rather than frame count.
+  </p>
+  <div class="warn">
+    <p><strong>One seed. Do not over-read this.</strong> The spread
+    <em>within</em> each arm (about 0.10–0.13 macro-F1) is as large as the
+    gaps <em>between</em> arms, so none of it is yet distinguishable from
+    run-to-run noise. Repeat seeds and a paired video bootstrap are what would
+    turn this into a claim; until then it is a direction, not a result.</p>
+  </div>
+  <p>
+    One thing that is not subtle: absolute performance sits far below the
+    0.83–0.96 the protocol anticipated from simulation. That is the
+    train/test shift doing its work — the model is trained on trimmed clips
+    where the plane is held throughout, and tested on sweeps that move in and
+    out of plane. Post-hoc smoothing, expected to be a strong baseline,
+    <em>hurt</em> in every condition, because the test videos have short runs
+    (median 12 frames) and the tuned filter over-smooths them.
+  </p>
+</section>
+
+<section class="card">
+  <h2>What went wrong on the way here</h2>
+  <p>
+    Four defects in data preparation, none of which raised an error. They are
+    written up in full in the repository's data audit because the failure mode
+    — a pipeline that runs to completion and reports wrong numbers — is the
+    reusable lesson.
+  </p>
+  <ul class="findings">
+    <li><strong>The <code>ALL</code> sentinel parsed to nothing.</strong> The
+      label CSV marks whole-video positives with the string <code>ALL</code>.
+      It is not a Python literal, so it fell through to a digit scan, matched
+      nothing, and every one of the 266 standard-plane training videos
+      contributed zero labels.</li>
+    <li><strong>266 filenames are doubled in the published archive.</strong>
+      The videos ship as <code>X__X.avi</code> while the label file calls them
+      <code>X.avi</code>. Those are the same 266 videos, so two independent
+      bugs destroyed every positive training video at once.</li>
+    <li><strong>71 videos silently extracted nothing.</strong>
+      <code>cv2.imwrite</code> encodes paths with the Windows ANSI codepage and
+      reports failure by returning <code>False</code>. The videos with Chinese
+      characters in their filenames decoded, were counted into the manifest,
+      and wrote zero files.</li>
+    <li><strong>The training split contains no label transitions at all.</strong>
+      Train is trimmed clips — 0.00 transitions per video, against 1.35 in
+      test. A temporal model trained there reaches zero loss by ignoring time,
+      so the temporal arm needed synthesised transitions to be measurable.</li>
+  </ul>
+</section>
+
+<footer class="wrap">
+  <p>
+    Code and write-up:
+    <a id="repo-link" href="https://github.com/AkhilTeja2209/intrapartum-plane-density">github.com/AkhilTeja2209/intrapartum-plane-density</a>
+  </p>
+  <p class="hint">
+    Model trained on the IUGC 2024 dataset
+    (<a href="https://zenodo.org/records/17655183">Zenodo 10.5281/zenodo.17655183</a>,
+    CC-BY-4.0). Inference runs locally via onnxruntime-web; no image is
+    transmitted or stored. Code MIT-licensed.
+  </p>
+  <p class="hint"><strong>Again: this is a research artefact, not a
+    diagnostic tool.</strong></p>
+</footer>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

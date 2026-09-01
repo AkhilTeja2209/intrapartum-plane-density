@@ -1,0 +1,44 @@
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The demo is a static page: HTML, CSS, JS, one ONNX graph and a few
+      # JPEGs. Nothing is built, so there is no toolchain to pin.
+      - name: Check the model artefact is present
+        run: |
+          test -f site/model/model.onnx || {
+            echo "site/model/model.onnx is missing -- run tools/export_onnx.py"; exit 1; }
+          test -f site/model/model_meta.json || {
+            echo "site/model/model_meta.json is missing"; exit 1; }
+          ls -lh site/model
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
