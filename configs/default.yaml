@@ -1,0 +1,98 @@
+paths:
+  dataset_root: data/DatasetV3
+  frames_dir:   data/frames
+  index_csv:    data/index.csv
+  splits_json:  data/splits.json
+  results_dir:  results
+
+data:
+  img_size: 224
+  workers: 4
+  # temporal arm only
+  clip_len: 16          # ~0.5-0.6 s of real time at typical US frame rates
+  clip_stride: 8        # 50% overlap between training windows
+  temporal_stride: 1    # >1 widens the receptive field in time at fixed T
+
+model:
+  type: frame           # frame | temporal   (overridable with --model)
+  arch: resnet18
+  pretrained: true
+  dropout: 0.2
+  # temporal arm only
+  rnn: lstm             # lstm | gru
+  hidden: 256
+  layers: 1
+  bidirectional: true
+  freeze_encoder: false
+
+# IDENTICAL for every condition and both arms. Do not tune per-arm.
+train:
+  epochs: 25
+  patience: 6
+  batch_size: 64        # temporal arm uses batch_size // clip_len clips
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 1
+  grad_clip: 1.0
+  amp: true
+  class_weighted: true
+
+eval:
+  smoothing: true
+  n_boot: 1000
+
+# ---------------------------------------------------------------------------
+# Conditions. `k` frames per video; k: null means all frames.
+#
+# PROTOCOL A (natural): sparse_k1 ... dense_all
+#   traces the density curve at natural dataset size.
+# PROTOCOL B (matched budget): the dense_matched_* rows
+#   `budget` must be set to the frame count the matching sparse arm produced.
+#   Run `python -m src.make_budgets` after building splits -- it prints the
+#   exact numbers and rewrites this section for you.
+# ---------------------------------------------------------------------------
+conditions:
+  # --- Protocol A: sparse end (a synthetic "image dataset") ---------------
+  - name: sparse_k1
+    k: 1
+    strategy: uniform
+  - name: sparse_k1_curated     # mimics how FETAL_PLANES_DB was actually built
+    k: 1
+    strategy: curated
+  - name: sparse_k2
+    k: 2
+    strategy: uniform
+  - name: sparse_k5
+    k: 5
+    strategy: uniform
+  - name: sparse_k10
+    k: 10
+    strategy: uniform
+  - name: sparse_k20
+    k: 20
+    strategy: uniform
+
+  # --- Protocol A: dense end (the video dataset) --------------------------
+  - name: dense_stride8
+    k: null
+    stride: 8
+  - name: dense_stride4
+    k: null
+    stride: 4
+  - name: dense_stride2
+    k: null
+    stride: 2
+  - name: dense_all
+    k: null
+
+  # --- Protocol B: same frame budget, different density -------------------
+  # budget values are placeholders; make_budgets.py fills in the real ones.
+  - name: dense_matched_k5
+    k: null
+    budget: 2305
+    budget_unit: video
+  - name: dense_matched_k20
+    k: null
+    budget: 9220
+    budget_unit: video

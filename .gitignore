@@ -1,0 +1,32 @@
+# ---- Data: never commit. 1.1 GB zip + ~3 GB of extracted frames. ----------
+data/
+DatasetV3/
+DatasetV3.zip
+*.zip
+*.avi
+*.mp4
+
+# ---- Run outputs ---------------------------------------------------------
+results/
+report/
+runs/
+checkpoints/
+*.pt
+*.pth
+wandb/
+
+# ---- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ---- OS / editor ---------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
