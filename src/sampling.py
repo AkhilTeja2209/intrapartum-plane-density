@@ -185,6 +185,66 @@ def match_budget(df: pd.DataFrame, budget: int, seed: int = 0,
     return out.reset_index(drop=True)
 
 
+def match_budget_and_prior(df: pd.DataFrame, budget: int, target_pos_rate: float,
+                           seed: int = 0) -> pd.DataFrame:
+    """Trim to `budget` frames AND to a target positive rate (ROADMAP R9).
+
+    `match_budget` alone equalises frame count between the sparse and dense
+    arms but not class balance, and on this dataset the two are confounded:
+    every sparse condition sits at pos-rate 0.613 because per-video sampling
+    weights videos equally, while every dense condition sits at 0.415 because
+    dense sampling weights by length and the trimmed positive clips are shorter
+    than the negative ones. Density and class prior therefore move together
+    across the whole independent variable, and a dense-arm win is attributable
+    to either.
+
+    Identical inverse-frequency class weighting does not remove this. Weighting
+    rebalances within a condition; it does not make two conditions drawn from
+    different underlying distributions comparable.
+
+    Whole videos are taken wherever possible so within-video density -- the
+    point of the dense arm -- survives, with a contiguous chunk of one final
+    video per class to hit the target exactly.
+    """
+    rng = np.random.default_rng(seed)
+    want_pos = int(round(budget * target_pos_rate))
+    want_neg = budget - want_pos
+
+    vid_lab = df.groupby("video_id").label.mean()
+    parts = []
+    for want, vids in ((want_pos, vid_lab[vid_lab > 0.5].index.tolist()),
+                       (want_neg, vid_lab[vid_lab <= 0.5].index.tolist())):
+        vids = list(vids)
+        rng.shuffle(vids)
+        kept, total, leftover = [], 0, None
+        for v in vids:
+            n = int((df.video_id == v).sum())
+            if total + n <= want:
+                kept.append(v)
+                total += n
+            else:
+                leftover = v
+                break
+        if kept:
+            parts.append(df[df.video_id.isin(kept)])
+        need = want - total
+        if need > 0 and leftover is not None:
+            g = df[df.video_id == leftover].sort_values("frame_idx")
+            s = int(rng.integers(0, max(1, len(g) - need + 1)))
+            parts.append(g.iloc[s:s + need])
+        elif need > 0:
+            log.warning("prior matching: only %d of %d requested frames "
+                        "available for one class; the target rate cannot be "
+                        "reached exactly", total, want)
+
+    out = pd.concat(parts, ignore_index=True) if parts else df.iloc[:budget].copy()
+    got = float(out.label.mean())
+    if abs(got - target_pos_rate) > 0.02:
+        log.warning("prior matching missed: wanted %.4f, got %.4f",
+                    target_pos_rate, got)
+    return out.reset_index(drop=True)
+
+
 def build_condition(train_df: pd.DataFrame, cond: dict, seed: int = 0) -> pd.DataFrame:
     """Turn a condition spec from the config into an actual training frame set.
 
@@ -194,12 +254,18 @@ def build_condition(train_df: pd.DataFrame, cond: dict, seed: int = 0) -> pd.Dat
         stride   : keep every stride-th frame (applied after k)
         budget   : cap total frames
         budget_unit : 'video' or 'frame'
+        target_pos_rate : also match this class prior (ROADMAP R9)
     """
     out = sample_per_video(train_df, cond.get("k"), cond.get("strategy", "uniform"), seed)
     if cond.get("stride", 1) > 1:
         out = stride_sample(out, cond["stride"])
     if cond.get("budget"):
-        out = match_budget(out, cond["budget"], seed, cond.get("budget_unit", "video"))
+        if cond.get("target_pos_rate") is not None:
+            out = match_budget_and_prior(out, cond["budget"],
+                                         float(cond["target_pos_rate"]), seed)
+        else:
+            out = match_budget(out, cond["budget"], seed,
+                               cond.get("budget_unit", "video"))
     log.info("condition %-22s -> %6d frames | %3d videos | pos-rate %.4f",
              cond.get("name", "?"), len(out), out.video_id.nunique(),
              out.label.mean())

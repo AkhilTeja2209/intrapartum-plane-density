@@ -136,6 +136,161 @@ class ClipDataset(Dataset):
                 torch.tensor(rows, dtype=torch.long))    # (T,) row ids for eval
 
 
+class SplicedClipDataset(ClipDataset):
+    """ClipDataset that synthesises label transitions. TRAIN ONLY.
+
+    Why this exists
+    ---------------
+    The official train split contains 266 trimmed standard-plane clips and 168
+    trimmed non-standard clips, and **not one label transition** -- 0.00 per
+    video, against 0.93 in val and 1.35 in test (docs/DATA_AUDIT.md S2). A
+    temporal model trained there can reach zero training loss by ignoring time
+    entirely and emitting one constant per clip, because within any window the
+    label never changes. It never observes the only event it exists to model.
+    Meanwhile the smoothed frame-wise baseline gets its window and Viterbi
+    `p_stay` tuned on validation, which does contain transitions. Arm 2 run on
+    the raw split would therefore measure the split, not the architecture.
+
+    What this does
+    --------------
+    With probability `splice_p`, a training window is built by concatenating a
+    contiguous run from a positive video with a contiguous run from a negative
+    video. The labels come from the source frames, so the window contains a
+    genuine 0->1 or 1->0 boundary at a position the model cannot predict.
+
+    Partners are drawn from the **same acquisition session** where one exists
+    (42 of 144 sessions hold both classes, covering 232 of 434 train videos),
+    falling back to a random partner otherwise. Same-session splices share
+    patient, probe, scanner and gain settings, so the join is a plausible
+    off-plane movement rather than a cut between two unrelated recordings.
+
+    Honesty about what this is
+    --------------------------
+    A spliced boundary is a hard cut. A real probe sweeping off plane passes
+    through intermediate frames that are genuinely ambiguous, and no splice
+    reproduces those. So this teaches a temporal model that labels change and
+    roughly how long runs last -- which is exactly the prior the smoothing
+    baseline gets for free -- without teaching it what a real transition looks
+    like. It makes Arm 2 measurable, not realistic, and the paper must say so.
+    `splice_p` is a reported hyperparameter, and `splice_p=0` recovers the
+    unspliced baseline for the ablation.
+    """
+
+    def __init__(self, df: pd.DataFrame, frames_dir: str | Path,
+                 clip_len: int = 16, stride: int = 8, img_size: int = 224,
+                 temporal_stride: int = 1, splice_p: float = 0.5,
+                 seed: int = 0, same_session_p: float = 0.8,
+                 min_side: float = 0.25):
+        super().__init__(df, frames_dir, clip_len, stride, img_size,
+                         True, temporal_stride)
+        self.splice_p = float(splice_p)
+        self.same_session_p = float(same_session_p)
+        self.seed = int(seed)
+        # at least this fraction of the clip on each side of the boundary, so
+        # a spliced window always carries a substantial run of both classes
+        self.min_side = float(min_side)
+        self._rng_cache: dict[int, np.random.Generator] = {}
+
+        # per-video row positions (already sorted by frame_idx in super()) and
+        # the video's single label
+        self.vid_rows: dict[str, np.ndarray] = {}
+        self.vid_label: dict[str, int] = {}
+        for vid, g in self.df.groupby("video_id", sort=True):
+            self.vid_rows[vid] = g.index.to_numpy()
+            self.vid_label[vid] = int(round(float(g.label.mean())))
+
+        self.pos_vids = [v for v, l in self.vid_label.items() if l == 1]
+        self.neg_vids = [v for v, l in self.vid_label.items() if l == 0]
+
+        # session key: the acquisition timestamp prefix shared by videos
+        # recorded in one sitting (20190909T155747I1, ...I5, ...I9).
+        import re as _re
+
+        def session_of(vid: str) -> str:
+            m = _re.match(r"^(\d{8}T\d{6})", str(vid))
+            return m.group(1) if m else str(vid)[:15]
+
+        self.session: dict[str, str] = {v: session_of(v) for v in self.vid_rows}
+        self.by_session: dict[tuple[str, int], list[str]] = {}
+        for v, s in self.session.items():
+            self.by_session.setdefault((s, self.vid_label[v]), []).append(v)
+
+        self.window_vid = [str(self.df.iloc[rows[0]].video_id)
+                           for rows in self.windows]
+
+        if not self.pos_vids or not self.neg_vids:
+            raise ValueError(
+                "splicing needs both positive and negative training videos; "
+                f"found {len(self.pos_vids)} positive and {len(self.neg_vids)} "
+                f"negative. Use ClipDataset (splice_p=0) instead.")
+
+    def _rng(self) -> np.random.Generator:
+        """One generator per worker, seeded so runs stay reproducible."""
+        info = torch.utils.data.get_worker_info()
+        wid = 0 if info is None else int(info.id)
+        if wid not in self._rng_cache:
+            self._rng_cache[wid] = np.random.default_rng(
+                [self.seed, wid, 0x5911CE])
+        return self._rng_cache[wid]
+
+    def _partner(self, vid: str, rng: np.random.Generator) -> str:
+        """A video of the opposite class, same session when one exists."""
+        want = 1 - self.vid_label[vid]
+        same = self.by_session.get((self.session[vid], want), [])
+        if same and rng.random() < self.same_session_p:
+            return str(rng.choice(same))
+        pool = self.pos_vids if want == 1 else self.neg_vids
+        return str(rng.choice(pool))
+
+    def _run(self, vid: str, n: int, rng: np.random.Generator,
+             from_start: bool) -> np.ndarray:
+        """n contiguous row positions from `vid`, edge-padded if it is short.
+
+        from_start=False takes a run ending at a random point (the frames that
+        lead INTO the boundary); from_start=True takes one beginning at a
+        random point (the frames that follow it).
+        """
+        rows = self.vid_rows[vid]
+        if len(rows) <= n:
+            pad = np.full(n - len(rows), rows[-1] if from_start else rows[0])
+            return np.concatenate([rows, pad] if from_start else [pad, rows])
+        s = int(rng.integers(0, len(rows) - n + 1))
+        return rows[s:s + n]
+
+    def __getitem__(self, w):
+        rng = self._rng()
+        if rng.random() >= self.splice_p:
+            return super().__getitem__(w)
+
+        vid_a = self.window_vid[w]
+        vid_b = self._partner(vid_a, rng)
+
+        lo = max(1, int(round(self.T * self.min_side)))
+        hi = self.T - lo
+        cut = int(rng.integers(lo, hi + 1)) if hi >= lo else self.T // 2
+
+        # Randomise which class leads, so the model sees 0->1 and 1->0 equally
+        # and cannot learn "the clip starts positive".
+        if rng.random() < 0.5:
+            first, n_first, second, n_second = vid_a, cut, vid_b, self.T - cut
+        else:
+            first, n_first, second, n_second = vid_b, cut, vid_a, self.T - cut
+
+        rows = np.concatenate([self._run(first, n_first, rng, from_start=False),
+                               self._run(second, n_second, rng, from_start=True)])
+
+        imgs, labels = [], []
+        for p in rows:
+            r = self.df.iloc[int(p)]
+            imgs.append(self.tf(Image.open(self.root / r.frame_path).convert("L")))
+            labels.append(int(r.label))
+        return (torch.stack(imgs),
+                torch.tensor(labels, dtype=torch.long),
+                # Row ids are only read during evaluation, and splicing is
+                # train-only. -1 makes a leak into eval fail loudly.
+                torch.full((self.T,), -1, dtype=torch.long))
+
+
 def class_weights(df: pd.DataFrame) -> torch.Tensor:
     """Inverse-frequency weights for CrossEntropyLoss.
 

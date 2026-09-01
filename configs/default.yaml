@@ -12,6 +12,12 @@ data:
   clip_len: 16          # ~0.5-0.6 s of real time at typical US frame rates
   clip_stride: 8        # 50% overlap between training windows
   temporal_stride: 1    # >1 widens the receptive field in time at fixed T
+  # The official train split contains ZERO label transitions (audit S2), so a
+  # temporal model there learns nothing about when the label changes. Splicing
+  # concatenates a positive and a negative clip -- same session where possible
+  # -- to synthesise the boundary. Reported hyperparameter; 0.0 = ablation.
+  splice_p: 0.5
+  splice_same_session_p: 0.8
 
 model:
   type: frame           # frame | temporal   (overridable with --model)
@@ -57,9 +63,6 @@ conditions:
   - name: sparse_k1
     k: 1
     strategy: uniform
-  - name: sparse_k1_curated     # mimics how FETAL_PLANES_DB was actually built
-    k: 1
-    strategy: curated
   - name: sparse_k2
     k: 2
     strategy: uniform
@@ -96,3 +99,20 @@ conditions:
     k: null
     budget: 8638
     budget_unit: video
+
+  # --- Protocol B': same budget AND same class prior (ROADMAP R9) ----------
+  # Sparse conditions sit at pos-rate 0.613 (every video weighted equally);
+  # dense conditions at 0.415 (long negative videos dominate). Density and
+  # class prior therefore move together across the whole independent variable.
+  # These arms hold the prior at the sparse arm's value so a dense-arm win
+  # cannot be attributed to class balance.
+  - name: dense_prior_matched_k5
+    k: null
+    budget: 2170
+    budget_unit: video
+    target_pos_rate: 0.6129
+  - name: dense_prior_matched_k20
+    k: null
+    budget: 8638
+    budget_unit: video
+    target_pos_rate: 0.6129

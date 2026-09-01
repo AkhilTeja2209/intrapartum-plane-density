@@ -27,7 +27,8 @@ import pandas as pd
 import torch
 import yaml
 
-from .datasets import ClipDataset, FrameDataset, class_weights
+from .datasets import (ClipDataset, FrameDataset, SplicedClipDataset,
+                       class_weights)
 from .engine import fit, make_loader, predict
 from .metrics import bootstrap_ci, evaluate_all, pick_threshold
 from .models import build, load_encoder_from
@@ -112,8 +113,25 @@ def main():
 
     if temporal:
         T = cfg["data"]["clip_len"]
-        tr_ds = ClipDataset(train_df, frames_dir, T, cfg["data"]["clip_stride"],
-                            img, True, cfg["data"].get("temporal_stride", 1))
+        # Splicing synthesises the label transitions the official train split
+        # does not contain (docs/DATA_AUDIT.md S2). splice_p=0 recovers the
+        # unspliced baseline, which is the ablation the paper needs.
+        splice_p = float(cfg["data"].get("splice_p", 0.0))
+        if splice_p > 0:
+            tr_ds = SplicedClipDataset(
+                train_df, frames_dir, T, cfg["data"]["clip_stride"], img,
+                cfg["data"].get("temporal_stride", 1), splice_p, args.seed,
+                cfg["data"].get("splice_same_session_p", 0.8))
+            log_.info("splicing ON: p=%.2f, %d positive / %d negative train "
+                      "videos available as partners", splice_p,
+                      len(tr_ds.pos_vids), len(tr_ds.neg_vids))
+        else:
+            tr_ds = ClipDataset(train_df, frames_dir, T,
+                                cfg["data"]["clip_stride"], img, True,
+                                cfg["data"].get("temporal_stride", 1))
+            log_.warning("splicing OFF and the training split has no label "
+                         "transitions -- the temporal arm cannot learn "
+                         "transitions from this data. Baseline/ablation only.")
         va_ds = ClipDataset(val_df, frames_dir, T, T // 2, img, False,
                             cfg["data"].get("temporal_stride", 1))
         te_ds = ClipDataset(test_df, frames_dir, T, T // 2, img, False,
