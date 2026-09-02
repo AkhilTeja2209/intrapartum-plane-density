@@ -536,36 +536,3 @@ baseline. Those are what make the result believable rather than a story.
 | Every condition scores the same | sampling not applied | check the `condition ... -> N frames` line differs per run |
 | `prediction files are not frame-aligned` | comparing runs from different splits | you regenerated `splits.json` mid-study — regenerate all runs |
 | Training loss stuck flat | LR wrong for your setup | try `lr: 3.0e-4`; check pos-rate isn't degenerate first |
-
----
-
-## Your week, roughly
-
-| Day | What you do | Hands-on |
-|---|---|---|
-| 1 | Parts 0–2: read, laptop smoke test | 1 h |
-| 1–2 | Part 3: download and upload the dataset | 30 min + waiting |
-| 2 | Parts 4–6: prep, save, real smoke test | 1.5 h |
-| 2–4 | Part 7: Arm 1 grid | 20 min/day of launching |
-| 4–5 | Part 8: Arm 2 | 20 min/day |
-| 5 | Parts 9–10: tables, figures, Grad-CAM | 1 h |
-| 6–7 | Write it up against `PROTOCOL.md` | — |
-
----
-
-## Before you start Part 3
-
-Two things from `PROTOCOL.md` you should settle with Dr. Mythili first,
-because they change what you run:
-
-1. **The FETAL_PLANES_DB comparison in your current abstract doesn't isolate
-   what it claims to** — that dataset is transabdominal mid-pregnancy imaging
-   with 6 anatomical classes, while IUGC is transperineal during-labour
-   imaging with a binary label. Five things differ, not one. Doing the
-   sparse-vs-dense comparison *inside* IUGC gives you strictly more control
-   and keeps your research gap intact.
-2. **The official test folder has no public labels**, so your test set is
-   carved out of train+validation at the video level. Standard practice for a
-   closed challenge, but say it explicitly in the paper.
-
-Get her agreement on both before you spend the GPU hours, not after.

@@ -9,16 +9,19 @@ DatasetV3.zip
 # ---- Run outputs ---------------------------------------------------------
 results/
 report/
-# ...but the Review-2 deliverables and their figures are tracked.
-!report/figures/
-!report/figures/*.png
-!report/*.docx
-!report/*.pptx
 runs/
 checkpoints/
 *.pt
 *.pth
 wandb/
+
+# ---- Coursework, kept out of the public repo -----------------------------
+# Submission documents and the scripts that build them carry personal and
+# course-administrative detail that is not part of the project.
+tools/build_report.py
+tools/build_ppt.py
+tools/report_content.py
+tools/make_report_figures.py
 
 # ---- Python --------------------------------------------------------------
 __pycache__/
