@@ -9,6 +9,11 @@ DatasetV3.zip
 # ---- Run outputs ---------------------------------------------------------
 results/
 report/
+# ...but the Review-2 deliverables and their figures are tracked.
+!report/figures/
+!report/figures/*.png
+!report/*.docx
+!report/*.pptx
 runs/
 checkpoints/
 *.pt
@@ -30,3 +35,4 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+tools/__pycache__/
