@@ -48,7 +48,6 @@ async function init() {
   }
 
   loadExamples();
-  loadCurve();
 }
 
 function renderModelLine(m) {
@@ -344,46 +343,6 @@ async function loadExamples() {
     });
   } catch {
     /* examples are optional */
-  }
-}
-
-/* ------------------------------------------------------------ the curve --- */
-
-async function loadCurve() {
-  try {
-    const rows = await (await fetch("results_summary.json")).json();
-    if (!Array.isArray(rows) || !rows.length) throw new Error("empty");
-    const body = document.querySelector("#curve tbody");
-    const head = document.createElement("thead");
-    head.innerHTML =
-      "<tr><th>condition</th><th>train frames</th><th>pos-rate</th>" +
-      "<th>macro-F1</th><th></th></tr>";
-    document.getElementById("curve").prepend(head);
-
-    const max = Math.max(...rows.map((r) => r.macro_f1));
-    let lastGroup = null;
-    rows.forEach((r) => {
-      if (lastGroup && r.group !== lastGroup) {
-        const sp = document.createElement("tr");
-        sp.className = "spacer";
-        sp.innerHTML = "<td colspan='5'></td>";
-        body.appendChild(sp);
-      }
-      lastGroup = r.group;
-      const tr = document.createElement("tr");
-      tr.innerHTML =
-        `<td>${r.condition}</td>` +
-        `<td>${r.train_frames.toLocaleString()}</td>` +
-        `<td>${r.pos_rate.toFixed(3)}</td>` +
-        `<td>${r.macro_f1.toFixed(4)}</td>` +
-        `<td class="bar-cell"><div class="bar" style="width:${
-          (100 * r.macro_f1) / max
-        }%"></div></td>`;
-      body.appendChild(tr);
-    });
-  } catch {
-    const b = $("curve-block");
-    if (b) b.hidden = true;
   }
 }
 
