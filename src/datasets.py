@@ -143,7 +143,7 @@ class SplicedClipDataset(ClipDataset):
     ---------------
     The official train split contains 266 trimmed standard-plane clips and 168
     trimmed non-standard clips, and **not one label transition** -- 0.00 per
-    video, against 0.93 in val and 1.35 in test (docs/DATA_AUDIT.md S2). A
+    video, against 0.93 in val and 1.35 in test. A
     temporal model trained there can reach zero training loss by ignoring time
     entirely and emitting one constant per clip, because within any window the
     label never changes. It never observes the only event it exists to model.

@@ -1,132 +1,198 @@
-# Standard-plane classification in intrapartum ultrasound
+# Intrapartum Standard-Plane Classification
 
-Frame density and temporal modelling in standard-plane classification, on the
-IUGC 2024 dataset
-([Zenodo 10.5281/zenodo.17655183](https://zenodo.org/records/17655183),
-774 videos / 68,106 frames / 1.1 GB, CC-BY-4.0).
+[![CI](https://github.com/AkhilTeja2209/intrapartum-plane-density/actions/workflows/ci.yml/badge.svg)](https://github.com/AkhilTeja2209/intrapartum-plane-density/actions/workflows/ci.yml)
+[![Pages](https://github.com/AkhilTeja2209/intrapartum-plane-density/actions/workflows/pages.yml/badge.svg)](https://github.com/AkhilTeja2209/intrapartum-plane-density/actions/workflows/pages.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12%20|%203.13-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[▶ Live demo](https://akhilteja2209.github.io/intrapartum-plane-density/)** —
-> drop in an ultrasound frame and the trained ResNet-18 scores it in your
-> browser. Nothing is uploaded. **Research demo, not a medical device.**
+A deep learning pipeline that classifies intrapartum transperineal ultrasound
+frames as **standard** or **non-standard** — that is, whether the pubic
+symphysis and fetal head are resolved well enough to measure the angle of
+progression.
 
-> **Status.** Data preparation is done and verified: 65,531 frames / 774
-> videos, label join rate 1.0000, zero unlabelled. The Arm 1 density grid runs
-> on the official split. Arm 2 uses spliced transitions, because the training
-> split contains none (see below).
->
-> Several assumptions in `PROTOCOL.md` are false for this dataset release — the
-> official test labels *are* public, the positive rate is ~0.44 rather than
-> ~0.17, and the training split has **zero label transitions**. Each changes
-> the experiment. See **[`ROADMAP.md`](ROADMAP.md)** for the decisions,
-> **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence, and
-> **[`docs/RESULTS.md`](docs/RESULTS.md)** for what the runs show so far.
+It also runs a controlled study of **frame sampling density**: both the sparse
+("image dataset") and dense ("video dataset") arms are built from one corpus by
+varying only how many frames are drawn per video, with budget-matched and
+prior-matched arms to separate density from sample count.
 
-**Headline.** Frame density buys nothing measurable here: the best single result
-in the study comes from **434 training frames**, one per video, against 53,996
-for the dense arm. But the sharper finding is that **the effect is not
-measurable at this scale at all.** At seed 0 the dense arm lost every
-matched-budget comparison; repeated over three seeds, both Protocol B
-comparisons **flip sign**, and one condition moves by **0.23 macro-F1** on
-identical data. Seed-to-seed variance (±0.12) exceeds any density effect
-present, so a single-run comparison on a 434-video corpus cannot tell a real
-effect from a reseed — which is what prior work reports.
+**Live demo:** [akhilteja2209.github.io/intrapartum-plane-density](https://akhilteja2209.github.io/intrapartum-plane-density/)
+— drop in a frame, inference runs in your browser. Research demo, not a medical device.
 
-The temporal arm beats the frame-wise arm including its smoothed baseline
-(0.670 vs 0.545), but the ablation shows splicing is not what produced that: the
-unspliced model, which cannot have learned transitions, reaches 0.650.
+---
 
-Read **`PROTOCOL.md`** first. It contains the experimental design, one design
-problem in the current abstract that needs fixing before you run anything, and
-the failure modes most likely to produce a good-looking number that means
-nothing.
-
-## Setup
+## Installation
 
 ```bash
+git clone https://github.com/AkhilTeja2209/intrapartum-plane-density.git
+cd intrapartum-plane-density
 pip install -r requirements.txt
-mkdir -p data && cd data
-# download DatasetV3.zip from the Zenodo link, then:
-unzip DatasetV3.zip -d DatasetV3 && cd ..
 ```
 
-## Run order
+### Dataset
+
+The IUGC 2024 corpus (774 videos, CC-BY-4.0) is not redistributed here.
+Download `DatasetV3.zip` from
+[Zenodo 10.5281/zenodo.17655183](https://zenodo.org/records/17655183) into
+`data/`, then unwrap its nested archives:
 
 ```bash
-python -m src.extract_frames --dataset-root data/DatasetV3 --out-dir data/frames
-python -m src.build_index    --dataset-root data/DatasetV3 --frames-dir data/frames --out data/index.csv
-python -m src.splits         --index data/index.csv --out data/splits.json --scheme official
-python -m src.make_budgets   --config configs/default.yaml --write
-
-python -m src.run_experiment --condition sparse_k1  --model frame    --seed 0
-python -m src.run_experiment --condition dense_all  --model frame    --seed 0
-python -m src.run_experiment --condition dense_all  --model temporal --seed 0
-
-python -m src.analyze --results-dir results --out-dir report
+python tools/unpack_dataset.py --zip data/DatasetV3.zip --out data/DatasetV3
 ```
 
-`./run_all.sh` runs the whole grid across three seeds.
+---
 
-**`build_index` now enforces its own invariants** rather than reporting them.
-It refuses to write an index if any split has a join rate below 1.0, if an
-extracted folder is empty or disagrees with `manifest.csv`, if an `ALL`/`NONE`
-sentinel does not partition its video exactly, or if two label files disagree
-about the same frame. `--allow-unlabelled` and `--allow-empty-dirs` override
-these, but only reach for them once you know why the shortfall is genuine.
+## Quick start
 
-It also prints the column mapping it auto-detected and the annotation
-granularity per split. Read that output — a silent mis-parse here would poison
-every number downstream, and it has already happened once (see the audit).
+Verify the whole pipeline on synthetic data first — no dataset, no GPU, ~2 minutes:
 
-## Layout
+```bash
+python -m src.smoke_test --synthetic
+```
 
-| File | Role |
+Then prepare the real data and train:
+
+```bash
+# 1. decode videos to pre-resized frames
+python -m src.extract_frames --dataset-root data/DatasetV3 --out-dir data/frames
+
+# 2. join frames to labels (refuses to write unless the join rate is 1.0)
+python -m src.build_index --dataset-root data/DatasetV3 --frames-dir data/frames --out data/index.csv
+
+# 3. split by video using the dataset's official folders
+python -m src.splits --index data/index.csv --out data/splits.json --scheme official
+
+# 4. compute the matched-budget frame counts and write them into the config
+python -m src.make_budgets --config configs/default.yaml --write
+
+# 5. train one condition
+python -m src.run_experiment --condition dense_all --model frame --seed 0
+```
+
+---
+
+## Commands
+
+### Pipeline
+
+| Command | Description |
 |---|---|
-| `src/extract_frames.py` | mp4 → pre-resized JPEGs (decode once, not once per epoch) |
-| `src/build_index.py` | one frame-level index CSV; auto-detects label columns and reports the join |
-| `src/splits.py` | **video-level** splits, official by default; reports label-transition structure |
-| `src/sampling.py` | the study's independent variable: k-frames-per-video, stride, budget matching |
-| `src/datasets.py` | frame and clip datasets; ultrasound-appropriate augmentation |
-| `src/models.py` | one shared encoder, two heads |
-| `src/engine.py` | one trainer for both arms |
-| `src/metrics.py` | imbalance-aware + video-level clinical metrics, video bootstrap |
-| `src/smoothing.py` | the baseline the LSTM must beat |
-| `src/run_experiment.py` | one condition × one seed, end to end |
-| `src/analyze.py` | summary tables, density curve, paired bootstrap tests |
-| `src/gradcam.py` | quantitative check that the model looks at anatomy |
-| `tools/run_grid.py` | runs a condition grid, cheapest-first, resumable |
-| `tools/export_onnx.py` | exports a checkpoint for the browser demo; refuses to ship a divergent graph |
-| `tools/make_site_summary.py` | collects results into the table the demo renders |
-| `site/` | the static GitHub Pages demo (client-side inference) |
+| `src.extract_frames` | Decode each video once to pre-resized JPEG frames |
+| `src.build_index` | Build the frame-level index; enforces label-join invariants |
+| `src.splits` | Video-level split (`--scheme official` or `regrouped`) |
+| `src.make_budgets` | Compute Protocol B frame budgets from the split |
+| `src.run_experiment` | Train and evaluate one condition × one seed |
+| `src.analyze` | Summary tables, density curve, paired bootstrap tests |
+| `src.gradcam` | Fraction of Grad-CAM mass falling inside anatomy masks |
+| `src.smoke_test` | End-to-end synthetic run of every stage |
 
-## Compute
+### Tooling
 
-Single T4 (Colab free tier), 224px, ResNet-18: `dense_all` is ~6 min/epoch,
-so ~2 h per seed. The temporal arm costs 2–3× that. The full grid at 3 seeds
-is roughly 30–40 GPU-hours.
+| Command | Description |
+|---|---|
+| `tools/unpack_dataset.py` | Unwrap the nested Zenodo archives |
+| `tools/run_grid.py` | Run a condition grid, cheapest-first, resumable |
+| `tools/seed_summary.py` | Aggregate repeated seeds; per-seed paired deltas |
+| `tools/export_onnx.py` | Export a checkpoint for the browser demo, with verification |
+| `tools/make_site_summary.py` | Collect results into the demo's summary JSON |
+| `tools/make_architecture_figure.py` | Regenerate `docs/architecture.png` |
 
-To fit a smaller budget, cut in this order: drop to `--img-size 160` (~2×
-faster, costs about a point of macro-F1), then drop `dense_stride2` and
-`dense_stride4` (the curve survives with four points), then reduce the stride
-conditions to two seeds. Do **not** cut multiple seeds on the headline
-comparisons or the smoothed baseline — those are what make the result
-believable.
+### Common options
 
-## Anatomical features that define a standard plane
+```bash
+# temporal arm instead of frame-wise
+python -m src.run_experiment --condition dense_all --model temporal --seed 0
 
-You do not hand-engineer these — but you need them to sanity-check labels and
-to validate Grad-CAM output.
+# a whole grid across seeds
+python tools/run_grid.py --plan arm1 --seeds 0
+python tools/run_grid.py --plan headline --seeds 1,2
 
-Mid-sagittal transperineal view:
+# ablation: disable transition splicing
+python -m src.run_experiment --config configs/no_splice.yaml \
+    --condition dense_all --model temporal --seed 0 --tag nosplice
+```
 
-- **Pubic symphysis** — hypoechoic oval in the near field, long axis fully
-  visible. Partial or foreshortened PS makes the frame unmeasurable.
-- **Fetal head** — bright echogenic skull contour with posterior acoustic
-  shadowing.
-- **Both simultaneously present**, with the PS long axis clearly resolvable:
-  AoP is measured from that axis to the tangent line touching the head, so a
-  frame missing either structure cannot be a standard plane by definition.
-- **Urethra / bladder neck** — near-field orientation landmark.
+---
 
-Non-standard signatures: oblique or off-midline angulation, head-only or
-PS-only frames, probe-transition blur, shadowing that obscures the skull
-contour, gain saturation.
+## Architecture
+
+![System architecture](docs/architecture.png)
+
+Videos, label files and segmentation annotations enter at the top. Frames are
+decoded once rather than per epoch, and a sentinel-aware parser reads the label
+files. The two streams meet at a **single frame-level index** that every
+downstream stage reads, so no condition can accidentally derive different
+labels from another. The split is fixed once at video level and reused by every
+condition. Both arms share one encoder definition and differ only in the head,
+so both emit one probability per frame and the same metrics apply to each.
+
+| Module | Role |
+|---|---|
+| `src/extract_frames.py` | Video → JPEG frames, Unicode-safe write path |
+| `src/build_index.py` | Label parsing and the frame index; integrity assertions |
+| `src/splits.py` | Video-level splits, leakage assertions, transition diagnostics |
+| `src/sampling.py` | The study's independent variable: k, stride, budget, prior |
+| `src/datasets.py` | Frame and clip views, augmentation, transition splicing |
+| `src/models.py` | One shared ResNet-18 encoder; frame-wise and BiLSTM heads |
+| `src/engine.py` | One trainer for both arms |
+| `src/metrics.py` | Imbalance-aware and video-level metrics, video bootstrap |
+| `src/smoothing.py` | Post-hoc smoothing — the baseline the temporal arm must beat |
+| `src/analyze.py` | Summary tables and significance tests |
+| `site/` | Static browser demo running the exported model client-side |
+
+---
+
+## Experimental conditions
+
+Defined in `configs/default.yaml`. Sampling applies to the training split only;
+every condition is scored on the identical complete test set.
+
+| Group | Conditions | What it varies |
+|---|---|---|
+| Sparse | `sparse_k1`, `k2`, `k5`, `k10`, `k20` | k frames per video |
+| Dense | `dense_stride8`, `stride4`, `stride2`, `dense_all` | temporal stride |
+| Budget-matched | `dense_matched_k5`, `dense_matched_k20` | dense arm capped to the sparse arm's frame count |
+| Prior-matched | `dense_prior_matched_k5`, `dense_prior_matched_k20` | frame count **and** class prior held fixed |
+
+---
+
+## Results
+
+ResNet-18 on the official split, scored on the same 8,665-frame test set.
+
+| Condition | Train frames | macro-F1 (3 seeds) |
+|---|---:|---|
+| `sparse_k1` | 434 | 0.682 ± 0.053 |
+| `sparse_k5` | 2,170 | 0.638 ± 0.050 |
+| `dense_matched_k5` | 2,170 | 0.576 ± 0.034 |
+| `dense_prior_matched_k5` | 2,170 | 0.608 ± 0.119 |
+| `dense_all` | 53,996 | 0.610 ± 0.032 |
+
+More frames did not help — the strongest single result came from 434 training
+frames, one per video. The budget-matched comparison **reverses sign across
+seeds** (−0.106, +0.013, −0.093), and one condition moves 0.231 macro-F1 on
+identical data, so seed-to-seed variance exceeds any density effect at this
+corpus size.
+
+Temporal arm on `dense_all`: frame-wise 0.579 raw and 0.545 smoothed, against
+0.670 for the BiLSTM with spliced transitions. The ablation without splicing
+reaches 0.650, so the temporal gain is not attributable to transition modelling.
+
+---
+
+## Requirements
+
+- Python 3.10 or later
+- PyTorch 2.0+ with CUDA for training (CPU is fine for the synthetic smoke test)
+- ~10 GB disk for the dataset and extracted frames
+- A CUDA GPU with 8 GB VRAM reproduces the full grid in roughly 5 GPU-hours
+
+Dependencies are listed in `requirements.txt`.
+
+---
+
+## License
+
+Code is MIT-licensed — see [LICENSE](LICENSE).
+
+The IUGC 2024 dataset is distributed separately by its authors under CC-BY-4.0
+and is not redistributed in this repository.

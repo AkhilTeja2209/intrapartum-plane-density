@@ -104,7 +104,7 @@ conditions:
     budget: 8638
     budget_unit: video
 
-  # --- Protocol B': same budget AND same class prior (ROADMAP R9) ----------
+  # --- Protocol B': same budget AND same class prior ----------------------
   # Sparse conditions sit at pos-rate 0.613 (every video weighted equally);
   # dense conditions at 0.415 (long negative videos dominate). Density and
   # class prior therefore move together across the whole independent variable.

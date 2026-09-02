@@ -26,6 +26,6 @@ jobs:
 
       # Runs the whole pipeline on 20 synthetic videos: label parsing, index
       # build, splits, sampling, metrics, both training arms, analyze. Stage 0
-      # guards the ALL-sentinel and doubled-stem defects from docs/DATA_AUDIT.md.
+      # guards the ALL-sentinel and doubled-stem label-join defects.
       - name: Synthetic smoke test
         run: python -m src.smoke_test --synthetic

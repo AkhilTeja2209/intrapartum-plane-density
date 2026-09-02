@@ -17,7 +17,7 @@ Two schemes
 
 `regrouped` pools every labelled video and re-partitions with
 StratifiedGroupKFold. It was the original default, on the belief that the
-official test labels were withheld. They are not (see docs/DATA_AUDIT.md S1),
+official test labels were withheld. They are not,
 and pooling is actively harmful here -- for a reason specific to this dataset,
 documented below.
 
@@ -58,8 +58,8 @@ transition prior tuned on validation, which does have transitions. Arm 2 as
 specified would compare a temporal model that could not learn transitions
 against a baseline tuned on them, and the LSTM would lose for reasons that have
 nothing to do with temporal modelling. This module reports the transition
-counts so the problem cannot be run past by accident; ROADMAP.md R2 carries the
-options.
+counts so the problem cannot be run past by accident. SplicedClipDataset in
+src/datasets.py synthesises the missing transitions.
 """
 from __future__ import annotations
 
@@ -225,7 +225,7 @@ def make_splits(index_csv: str, out_json: str, seed: int = 0,
                     "transition prior tuned on validation, which does have "
                     "them.")
         log.warning("Arm 2 run on this split does not measure temporal "
-                    "modelling. Settle ROADMAP.md R2 before running it; Arm 1 "
+                    "modelling. Enable splicing before running it; Arm 1 "
                     "is unaffected.")
         log.warning("")
 

@@ -12,14 +12,18 @@ Everything downstream (splits, sampling, datasets) consumes this single CSV:
 
 Two things this file is deliberately strict about:
 
-1. The IUGC **test** split ships without public labels, so it cannot be used
-   as our test set. We build our own held-out split from train+validation and
-   say so explicitly in the paper. Frames from the official test folder are
-   kept in the index with label -1 and excluded from every supervised run.
+1. Every invariant is an assertion, not a log line. It refuses to write the
+   index if any split's label join rate is below 1.0, if an extracted folder is
+   empty or disagrees with the manifest, if an ALL/NONE sentinel fails to
+   partition its video, or if two label files disagree about the same frame.
+   Each of those failed silently at some point and produced plausible numbers
+   rather than an error. Use --allow-unlabelled / --allow-empty-dirs to
+   override, but only once you know why the shortfall is genuine.
 
-2. Column names in class_label.csv are auto-detected and then PRINTED. Check
-   the printout against the real file before trusting anything downstream --
-   a silent mis-parse here poisons every number in the study.
+2. Column names in class_label.csv are auto-detected and then PRINTED, along
+   with the annotation granularity of each split. Check the printout against
+   the real file before trusting anything downstream -- a silent mis-parse here
+   poisons every number in the study.
 """
 from __future__ import annotations
 
@@ -617,7 +621,8 @@ def main():
     if not tables:
         raise SystemExit(
             "No label file yielded any positive frames. Run "
-            "`python inspect_labels.py` and check that the positive-index "
+            "the per-file contribution table above and check that the "
+            "positive-index "
             "column name is listed in POS_INDEX_COLS in build_index.py.")
 
     labels = pd.concat(tables, ignore_index=True)
@@ -715,7 +720,7 @@ def main():
         log.info("NOTE: all %d official folders carry labels, including test/. "
                  "The earlier assumption that IUGC withholds the test labels "
                  "is not true of this Zenodo deposit, so the official split IS "
-                 "usable -- see ROADMAP.md R1. splits.py currently ignores "
+                 "usable. splits.py currently ignores "
                  "these folders and re-partitions every labelled video by "
                  "video id; that is a deliberate choice to revisit, not a "
                  "workaround for missing labels.", len(labelled_splits))

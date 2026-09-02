@@ -170,7 +170,7 @@ def main():
     start = Path(a.dir)
     if not start.exists():
         print(f"{start} does not exist. Extract the outer zip first:")
-        print("    python inspect_zip.py --extract data/DatasetV3")
+        print("    unzip data/DatasetV3.zip -d data/DatasetV3")
         return 1
 
     root = find_root(start)

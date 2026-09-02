@@ -187,7 +187,7 @@ def match_budget(df: pd.DataFrame, budget: int, seed: int = 0,
 
 def match_budget_and_prior(df: pd.DataFrame, budget: int, target_pos_rate: float,
                            seed: int = 0) -> pd.DataFrame:
-    """Trim to `budget` frames AND to a target positive rate (ROADMAP R9).
+    """Trim to `budget` frames AND to a target positive rate.
 
     `match_budget` alone equalises frame count between the sparse and dense
     arms but not class balance, and on this dataset the two are confounded:
@@ -254,7 +254,7 @@ def build_condition(train_df: pd.DataFrame, cond: dict, seed: int = 0) -> pd.Dat
         stride   : keep every stride-th frame (applied after k)
         budget   : cap total frames
         budget_unit : 'video' or 'frame'
-        target_pos_rate : also match this class prior (ROADMAP R9)
+        target_pos_rate : also match this class prior
     """
     out = sample_per_video(train_df, cond.get("k"), cond.get("strategy", "uniform"), seed)
     if cond.get("stride", 1) > 1:

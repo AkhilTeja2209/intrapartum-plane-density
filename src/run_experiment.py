@@ -114,7 +114,7 @@ def main():
     if temporal:
         T = cfg["data"]["clip_len"]
         # Splicing synthesises the label transitions the official train split
-        # does not contain (docs/DATA_AUDIT.md S2). splice_p=0 recovers the
+        # does not contain. splice_p=0 recovers the
         # unspliced baseline, which is the ablation the paper needs.
         splice_p = float(cfg["data"].get("splice_p", 0.0))
         if splice_p > 0:
