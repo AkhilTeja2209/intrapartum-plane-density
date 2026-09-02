@@ -16,7 +16,7 @@ COVER = {
     "reg": "23BCB0135",
     "name": "MORISETTY VENKATA SAI AKHIL TEJA",
     "guide": "Dr. Mythili. T",
-    "guide_desig": "<<Designation - please fill in>>",
+    "guide_desig": "Professor Grade 2",
     "specialization": "(Specialization: Bioinformatics)",
     "month_year": "September 2026",
 }

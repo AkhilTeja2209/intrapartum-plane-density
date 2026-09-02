@@ -256,6 +256,7 @@ def main() -> int:
                 (0, ""),
                 (0, "Faculty guide:"),
                 (0, "Dr. Mythili. T"),
+                (0, "Professor Grade 2"),
                 (0, "School of Computer Science and Engineering"),
             ])
 
