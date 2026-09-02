@@ -121,7 +121,7 @@
     <div class="tablewrap"><table id="curve"><tbody></tbody></table></div>
   </div>
 
-  <h3>What it shows so far</h3>
+  <h3>What it shows</h3>
   <p>
     Training on 124&times; more frames does not help. The sparse arm spans
     0.588–0.687 macro-F1 across 434 to 8,638 frames with no trend; the dense
@@ -130,17 +130,34 @@
     literature reports as a win for video.
   </p>
   <p>
-    Under matched budget the dense arm <em>loses</em> all four times, and
-    holding the class prior fixed as well does not rescue it. The dense
-    matched arm sees roughly 20–25 distinct patients against the sparse arm's
-    434, which points at patient diversity rather than frame count.
+    At seed 0 the dense arm also lost every matched-budget comparison, which
+    read as a clean answer to the question the study was built to ask. Then the
+    headline conditions were repeated over three seeds.
+  </p>
+
+  <h3>Protocol B does not replicate</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>dense &minus; matched sparse</th><th>seed 0</th><th>seed 1</th><th>seed 2</th><th>mean ± std</th></tr></thead>
+    <tbody>
+      <tr><td>budget-matched, k5</td><td>&minus;0.106</td><td><strong>+0.013</strong></td><td>&minus;0.093</td><td>&minus;0.062 ± 0.065</td></tr>
+      <tr><td>+ prior-matched, k5</td><td>&minus;0.168</td><td><strong>+0.121</strong></td><td>&minus;0.045</td><td>&minus;0.031 ± 0.145</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    Both comparisons <strong>flip sign</strong> between seeds, and both standard
+    deviations exceed their means. One condition
+    (<code>dense_prior_matched_k5</code>) moves by <strong>0.23 macro-F1</strong>
+    across seeds on identical data with an identical recipe.
   </p>
   <div class="warn">
-    <p><strong>One seed. Do not over-read this.</strong> The spread
-    <em>within</em> each arm (about 0.10–0.13 macro-F1) is as large as the
-    gaps <em>between</em> arms, so none of it is yet distinguishable from
-    run-to-run noise. Repeat seeds and a paired video bootstrap are what would
-    turn this into a claim; until then it is a direction, not a result.</p>
+    <p><strong>So the finding is about measurability, not density.</strong>
+    On a 434-video corpus with this train/test shift, seed-to-seed variance
+    reaches ±0.12 macro-F1 — larger than any density effect present. A
+    single-run sparse-versus-dense comparison on a dataset this size cannot
+    tell a real effect from a reseed. That indicts the methodology this project
+    set out to examine more directly than a positive result would have: prior
+    work reports single runs, and here single runs disagree with each other by
+    more than the quantity being measured.</p>
   </div>
   <p>
     One thing that is not subtle: absolute performance sits far below the

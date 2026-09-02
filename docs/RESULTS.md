@@ -5,14 +5,12 @@ test set of **8,665 frames / 300 videos** (positive rate 0.556). Thresholds
 chosen on validation and frozen before test. Confidence intervals are 95% from
 a bootstrap over **videos**, not frames.
 
-**Seed 0 unless stated.** Repeat seeds for the headline conditions are running;
-until they land, everything below is a direction rather than a claim. The
-reason is in §4 and it is not boilerplate — the spread within a single arm is
-as large as the gaps between arms.
+**§1–3 are seed 0. §4 repeats the headline conditions over three seeds, and it
+overturns the single-seed reading — read it before quoting anything above.**
 
 ---
 
-## 1. Arm 1 — the density curve
+## 1. Arm 1 — the density curve  *(seed 0)*
 
 Sampling is applied to the training split only.
 
@@ -28,7 +26,9 @@ Sampling is applied to the training split only.
 | `dense_stride2` | 27,062 | 434 | 0.417 | 0.6258 | 0.6499 | 0.7893 | 0.8667 |
 | `dense_all` | 53,996 | 434 | 0.417 | 0.5785 | 0.6173 | 0.7689 | 0.7733 |
 
-**No density effect is visible.** The sparse arm spans 0.588–0.687 over a
+**No density effect is visible** (and see §4 — the seed-to-seed spread on a
+single condition reaches 0.23, so the ordering within this table carries little
+information). The sparse arm spans 0.588–0.687 over a
 20&times; range of training frames with no monotone trend; the dense arm spans
 0.506–0.637 over an 8&times; range, also with no trend. The best single result
 in the whole study comes from **434 training frames** — one frame per video.
@@ -37,7 +37,7 @@ Note the dense arm does not beat the sparse arm even in **Protocol A**, which is
 the comparison prior work reports as a win for video data. On this corpus, with
 the confound removed by construction, it is not a win at all.
 
-## 2. Arm 1 — Protocol B, matched budget
+## 2. Arm 1 — Protocol B, matched budget  *(seed 0; refuted in §4)*
 
 The contribution. Each dense arm is capped to the exact frame count of its
 sparse counterpart; the prior-matched arms additionally hold the class balance
@@ -50,18 +50,16 @@ at the sparse arm's 0.613 (see `ROADMAP.md` R9).
 | prior-matched, k5 | 2,170 | 0.6431 | 0.4751 | **−0.168** |
 | prior-matched, k20 | 8,638 | 0.6386 | 0.5845 | **−0.054** |
 
-**Dense loses all four**, and holding the class prior fixed does not rescue it —
-it makes the k5 case worse. Reading this against the protocol's 2&times;2: dense
-loses under B, so any advantage dense might have had in A would have been sample
-count, not density. Here dense does not win A either, so the honest summary is
-that **frame density buys nothing on this corpus, and concentrating a fixed
-budget into fewer videos actively costs.**
+At seed 0 dense loses all four, which reads as a clean Protocol B result:
+concentrating a fixed budget into fewer videos costs you, and the mechanism
+looks visible in the data — `dense_matched_k5` draws its 2,170 frames from
+roughly 20–25 videos against 434 for `sparse_k5`, so it would be a statement
+about patient diversity rather than frames.
 
-The mechanism is visible in the data: `dense_matched_k5` draws its 2,170 frames
-from roughly 20–25 videos, against 434 for `sparse_k5`. That is a statement
-about **patient diversity**, not about frames.
+> **This does not replicate.** Two of these four comparisons were repeated over
+> three seeds in §4 and both **flip sign**. Do not quote this table on its own.
 
-## 3. Arm 2 — temporal modelling
+## 3. Arm 2 — temporal modelling  *(seed 0 only)*
 
 All on `dense_all`, so the only difference is the head and the training-window
 construction.
@@ -95,36 +93,74 @@ So splicing did its job — it made Arm 2 *runnable* on a split with no
 transitions — but it did not turn out to be load-bearing for the result. Say
 that in the paper rather than presenting splicing as the reason the LSTM wins.
 
-## 4. Why none of this is a claim yet
+## 4. Three seeds, and what survives
 
-Within the sparse arm alone, macro-F1 ranges 0.588–0.687 across conditions that
-differ only in how many frames were drawn. That 0.099 spread is **larger than
-three of the four matched-budget deficits** in §2. `dense_stride4` at 0.506 sits
-0.13 below `dense_stride8` at 0.637 despite having twice the data.
+The single-seed tables above looked like a result. They are not one.
 
-That is the signature of run-to-run variance dominating the effect being
-measured. The protocol calls for three seeds and a **paired** video bootstrap on
-the same resample, and that is what would separate the two. Repeat seeds for the
-headline conditions are in progress; the tables above will be revised, and the
-direction may not survive.
+| condition | mean | std | min | max | **range** |
+|---|---:|---:|---:|---:|---:|
+| `sparse_k1` | 0.6823 | 0.0529 | 0.6271 | 0.7325 | 0.105 |
+| `sparse_k5` | 0.6383 | 0.0503 | 0.5858 | 0.6860 | 0.100 |
+| `dense_matched_k5` | 0.5764 | 0.0343 | 0.5370 | 0.5990 | 0.062 |
+| `dense_prior_matched_k5` | 0.6076 | **0.1193** | 0.4751 | 0.7065 | **0.231** |
+| `dense_all` | 0.6102 | 0.0315 | 0.5785 | 0.6415 | 0.063 |
 
-Two things are already solid enough to state:
+`dense_prior_matched_k5` moves by **0.23 macro-F1** between seeds on identical
+data with an identical recipe. Nothing in §2 is larger than that.
 
-* Absolute performance is far below the 0.83–0.96 the protocol anticipated from
-  simulation. That gap is the train/test regime shift (`docs/DATA_AUDIT.md` S2):
-  the model trains on trimmed clips where the plane is held from first frame to
-  last, and is tested on sweeps that move in and out of plane. Simulation
-  assumed one population.
-* Post-hoc smoothing **hurt in 12 of 13 conditions** (the exception is
-  `sparse_k5`, 0.6431 → 0.6689). The tuner selects on validation, where runs are
-  long — median 33 frames — but test runs are short, median 12. A filter tuned
-  on the wrong run-length distribution over-smooths. This is a real
-  methodological trap for anyone using the smoothed baseline the protocol
-  specifies, and it is a consequence of val and test not being interchangeable.
+### Protocol B does not replicate
+
+| comparison | seed 0 | seed 1 | seed 2 | mean ± std | winner |
+|---|---:|---:|---:|---|---|
+| `dense_matched_k5` − `sparse_k5` | −0.106 | **+0.013** | −0.093 | −0.062 ± 0.065 | 2 sparse / 1 dense |
+| `dense_prior_matched_k5` − `sparse_k5` | −0.168 | **+0.121** | −0.045 | −0.031 ± 0.145 | 2 sparse / 1 dense |
+
+**Both comparisons flip sign across seeds, and both standard deviations are
+larger than their means.** The seed-0 finding — "dense loses all four
+matched-budget comparisons" — does not survive contact with two more seeds.
+Protocol B is **unresolved** on this corpus at n=3.
+
+### What that leaves
+
+The honest headline is not about density. It is about measurability:
+
+> On a 434-video corpus with this train/test regime shift, seed-to-seed
+> variance reaches ±0.12 macro-F1 (range 0.23). That is larger than any density
+> effect present. A single-run sparse-versus-dense comparison on a dataset this
+> size cannot distinguish a real effect from a reseed.
+
+That indicts the methodology this project set out to critique more directly
+than a positive result would have. Prior work reports Protocol A from single
+runs; here, single runs disagree with each other by more than the quantity being
+measured.
+
+Two weaker directional statements survive, both short of significance at n=3:
+
+* `sparse_k1` has the highest mean (0.6823 ± 0.053) and `dense_matched_k5` the
+  lowest (0.5764 ± 0.034) — a 0.106 gap at roughly 2.4 pooled standard
+  deviations.
+* More frames did not help: 434 frames (`sparse_k1`, 0.682) against 53,996
+  (`dense_all`, 0.610), a gap of 0.072 at about 1.6 pooled standard deviations,
+  in the *opposite* direction to the literature's claim.
+
+Neither is a claim. The protocol's **paired video bootstrap on a common
+resample** is far more powerful than comparing these independent means and is
+the correct next test; comparing whether the CIs overlap is not a valid
+substitute and is not what is being done here.
+
+`dense_prior_matched_k5` deserves a note of its own: its std (0.119) is roughly
+3&times; the other conditions'. Prior matching subsamples negatives to hit 0.613,
+so each seed draws a different and smaller set of videos, adding variance on top
+of training noise. If the prior-matched arm is kept, it needs more seeds than
+the others, not the same number.
 
 ## 5. What has not been run
 
-* Seeds 1 and 2 (in progress), and the paired video bootstrap between arms.
+* The **paired video bootstrap** between arms on a common resample — the test
+  the protocol specifies, and the one that would extract whatever signal exists
+  from under the variance documented in §4.
+* Seeds beyond 3, especially for the prior-matched arm. Arm 2 has one seed only,
+  so §3's temporal result is exactly as provisional as §1's was.
 * The Grad-CAM anatomical-attention check (`ROADMAP.md` R6). Until it runs, none
   of the above is protected against the model scoring well by recognising
   scanner or centre rather than anatomy — and with three hospitals in the

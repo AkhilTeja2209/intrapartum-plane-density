@@ -21,12 +21,19 @@ classification, on the IUGC 2024 dataset
 > **[`docs/DATA_AUDIT.md`](docs/DATA_AUDIT.md)** for the evidence, and
 > **[`docs/RESULTS.md`](docs/RESULTS.md)** for what the runs show so far.
 
-**Headline, seed 0:** frame density buys nothing — the best result in the study
-comes from 434 training frames, one per video — and the dense arm loses all four
-matched-budget comparisons. The temporal arm beats the frame-wise arm including
-its smoothed baseline, but an ablation shows splicing is not what produced that.
-Repeat seeds are running; the within-arm spread is currently as large as the
-between-arm gaps, so this is a direction, not yet a claim.
+**Headline.** Frame density buys nothing measurable here: the best single result
+in the study comes from **434 training frames**, one per video, against 53,996
+for the dense arm. But the sharper finding is that **the effect is not
+measurable at this scale at all.** At seed 0 the dense arm lost every
+matched-budget comparison; repeated over three seeds, both Protocol B
+comparisons **flip sign**, and one condition moves by **0.23 macro-F1** on
+identical data. Seed-to-seed variance (±0.12) exceeds any density effect
+present, so a single-run comparison on a 434-video corpus cannot tell a real
+effect from a reseed — which is what prior work reports.
+
+The temporal arm beats the frame-wise arm including its smoothed baseline
+(0.670 vs 0.545), but the ablation shows splicing is not what produced that: the
+unspliced model, which cannot have learned transitions, reaches 0.650.
 
 Read **`PROTOCOL.md`** first. It contains the experimental design, one design
 problem in the current abstract that needs fixing before you run anything, and
