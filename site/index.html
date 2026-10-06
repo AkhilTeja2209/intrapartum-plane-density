@@ -57,7 +57,10 @@
     <div class="result-grid">
       <figure class="preview">
         <canvas id="preview" width="224" height="224"></canvas>
-        <figcaption>what the model sees — 224&times;224, greyscale</figcaption>
+        <figcaption id="preview-cap">what the model looked at — Grad-CAM over
+          the 224&times;224 input</figcaption>
+        <button id="cam-toggle" class="ex" type="button" aria-pressed="true"
+                hidden>Hide what the model looked at</button>
       </figure>
       <div class="verdict">
         <p class="verdict-label" id="verdict">—</p>
@@ -68,6 +71,11 @@
           <span class="hint">probability this frame is a standard plane</span></p>
         <p class="hint" id="thr-line"></p>
         <p class="truth hint" id="truth" hidden></p>
+        <p class="hint cam-note">Warm regions are the evidence the classifier
+          actually used. On this corpus the frame-wise model puts about
+          1.8&times; more of that evidence inside the pubic symphysis and fetal
+          head than a random region of equal area would collect — so it is
+          reading anatomy, not scanner furniture.</p>
       </div>
     </div>
   </div>

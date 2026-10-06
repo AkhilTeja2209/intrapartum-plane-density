@@ -198,3 +198,8 @@ footer p { margin: 0 0 8px; }
   .preview canvas { width: 100%; height: auto; aspect-ratio: 1; }
   .card { padding: 18px 16px; }
 }
+
+/* ---- Grad-CAM overlay ---- */
+#cam-toggle { margin-top: 8px; width: 100%; font-size: 12.5px; }
+.cam-note { margin-top: 12px; max-width: 42ch; }
+.preview figcaption { max-width: 224px; margin-left: auto; margin-right: auto; }

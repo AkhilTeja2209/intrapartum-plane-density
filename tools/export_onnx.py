@@ -35,6 +35,34 @@ from src.metrics import frame_metrics  # noqa: E402
 from src.models import FrameClassifier  # noqa: E402
 
 
+class WithFeatures(torch.nn.Module):
+    """Emit the last conv feature map alongside the logits.
+
+    For a ResNet head of global-average-pool -> linear, Grad-CAM reduces
+    *exactly* to CAM. The logit is
+
+        y_c = sum_k w_ck * (1/HW) sum_ij A_kij
+
+    so d y_c / d A_kij = w_ck / HW, constant over space. The Grad-CAM channel
+    weight is therefore w_ck up to a positive scale, which normalisation
+    removes. That matters for the browser: ONNX Runtime Web cannot run a
+    backward pass, but it does not need to -- given the feature map and the
+    classifier weights it can compute the identical map in the forward
+    direction.
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.m = model
+
+    def forward(self, x):
+        e = self.m.encoder
+        x = e.maxpool(e.relu(e.bn1(e.conv1(x))))
+        x = e.layer4(e.layer3(e.layer2(e.layer1(x))))     # (B, 512, h, w)
+        pooled = torch.flatten(e.avgpool(x), 1)
+        return self.m.head(pooled), x
+
+
 def load_model(run_dir: Path) -> tuple[torch.nn.Module, dict]:
     ckpt = torch.load(run_dir / "best.pt", map_location="cpu", weights_only=False)
     cfg = ckpt["cfg"]
@@ -68,9 +96,10 @@ def main() -> int:
     onnx_path = out_dir / "model.onnx"
     dummy = torch.randn(1, 3, img_size, img_size)
     torch.onnx.export(
-        model, dummy, str(onnx_path),
-        input_names=["input"], output_names=["logits"],
-        dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
+        WithFeatures(model).eval(), dummy, str(onnx_path),
+        input_names=["input"], output_names=["logits", "features"],
+        dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"},
+                      "features": {0: "batch"}},
         opset_version=17, do_constant_folding=True,
     )
     size_mb = onnx_path.stat().st_size / 1e6
@@ -98,7 +127,9 @@ def main() -> int:
     with torch.no_grad():
         torch_logits = model(batch).numpy()
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    onnx_logits = sess.run(None, {"input": batch.numpy()})[0]
+    onnx_out = sess.run(None, {"input": batch.numpy()})
+    onnx_logits, onnx_feats = onnx_out[0], onnx_out[1]
+    print(f"feature map for CAM: {onnx_feats.shape}")
 
     max_diff = float(np.abs(torch_logits - onnx_logits).max())
     print(f"max |torch - onnx| logit diff over {len(sub)} real frames: {max_diff:.2e}")
@@ -130,6 +161,11 @@ def main() -> int:
         "std": IMAGENET_STD,
         "grayscale": True,
         "threshold": thr,
+        # Final classifier weights, so the page can compute the class
+        # activation map without a backward pass. cam_weights[c][k] multiplies
+        # feature channel k for class c.
+        "cam_weights": model.head[1].weight.detach().cpu().numpy().round(6).tolist(),
+        "cam_class": 1,
         "onnx_mb": round(size_mb, 2),
         "test_metrics": {k: raw[k] for k in
                          ("macro_f1", "balanced_accuracy", "auprc", "auroc",

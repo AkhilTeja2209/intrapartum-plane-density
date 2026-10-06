@@ -82,7 +82,9 @@ python -m src.run_experiment --condition dense_all --model frame --seed 0
 | `src.make_budgets` | Compute Protocol B frame budgets from the split |
 | `src.run_experiment` | Train and evaluate one condition × one seed |
 | `src.analyze` | Summary tables, density curve, paired bootstrap tests |
-| `src.gradcam` | Fraction of Grad-CAM mass falling inside anatomy masks |
+| `src.gradcam` | Grad-CAM for both arms; anatomical attention ratio |
+| `src.segmentation` | Build the PS/FH mask index |
+| `src.train_unet` | Train the U-Net segmenter and score it as a classifier |
 | `src.smoke_test` | End-to-end synthetic run of every stage |
 
 ### Tooling
@@ -176,6 +178,29 @@ corpus size.
 Temporal arm on `dense_all`: frame-wise 0.579 raw and 0.545 smoothed, against
 0.670 for the BiLSTM with spliced transitions. The ablation without splicing
 reaches 0.650, so the temporal gain is not attributable to transition modelling.
+
+### Segmentation and attention
+
+A U-Net on the same ResNet-18 encoder segments the pubic symphysis and fetal
+head at **0.870 mean Dice** (PS 0.829, FH 0.911) from 2,575 masks. Scored as a
+classifier by how much anatomy it finds, it reaches **0.607 macro-F1** —
+matching the dense frame classifier while never having seen a negative example.
+
+Grad-CAM over masked test frames gives an **anatomical attention ratio** (CAM
+mass inside the PS/FH mask against an equal-area random region):
+
+| Model | macro-F1 | attention |
+|---|---:|---:|
+| ResNet-18 `dense_all` | 0.579 | **1.94** |
+| ResNet-18 `sparse_k1` | 0.687 | **1.84** |
+| CNN-BiLSTM, no splice | 0.650 | 1.31 |
+| CNN-BiLSTM, spliced | 0.670 | **1.11** |
+
+The frame models read anatomy; the temporal models largely do not. The
+best-scoring temporal model attends to the anatomy least — a second,
+independent reason to doubt that its advantage reflects better frame
+understanding. Full write-up:
+**[`docs/SEGMENTATION_AND_ATTENTION.md`](docs/SEGMENTATION_AND_ATTENTION.md)**.
 
 ---
 

@@ -12,7 +12,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { session: null, meta: null, busy: false };
+const state = { session: null, meta: null, busy: false,
+                showCam: true, lastCam: null, lastCrop: null };
 
 function setStatus(msg, isError = false) {
   const el = $("status");
@@ -199,6 +200,97 @@ function softmax2(a, b) {
   return eb / (ea + eb); // P(class 1) = P(standard plane)
 }
 
+
+/* ------------------------------------------------------------ Grad-CAM --- */
+
+/**
+ * Class activation map from the exported feature map.
+ *
+ * For a head of global-average-pool -> linear, Grad-CAM reduces exactly to
+ * CAM: the logit is a weighted sum of channel means, so the gradient of the
+ * logit with respect to a feature cell is the classifier weight divided by the
+ * spatial area -- constant over space. The Grad-CAM channel weight is then the
+ * classifier weight up to a positive scale that normalisation removes.
+ *
+ * That is what makes this possible in a browser. ONNX Runtime Web has no
+ * backward pass, but none is needed: the map computed here matches PyTorch
+ * Grad-CAM to a correlation of 1.000000 on the bundled examples.
+ */
+function computeCAM(feat, dims, weights, cls) {
+  const [, C, H, W] = dims;
+  const w = weights[cls];
+  const cam = new Float32Array(H * W);
+  for (let k = 0; k < C; k++) {
+    const wk = w[k];
+    if (wk === 0) continue;
+    const base = k * H * W;
+    for (let i = 0; i < H * W; i++) cam[i] += wk * feat[base + i];
+  }
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < cam.length; i++) {
+    if (cam[i] < 0) cam[i] = 0;                 // ReLU, as in Grad-CAM
+    if (cam[i] < mn) mn = cam[i];
+    if (cam[i] > mx) mx = cam[i];
+  }
+  const span = mx - mn || 1;
+  for (let i = 0; i < cam.length; i++) cam[i] = (cam[i] - mn) / span;
+  return { data: cam, h: H, w: W };
+}
+
+/** Bilinear upsample of the 7x7 map to the displayed frame. */
+function upsampleCAM(cam, S) {
+  const { data, h, w } = cam;
+  const out = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) {
+    const fy = Math.min(h - 1, Math.max(0, (y + 0.5) * h / S - 0.5));
+    const y0 = Math.floor(fy), y1 = Math.min(h - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < S; x++) {
+      const fx = Math.min(w - 1, Math.max(0, (x + 0.5) * w / S - 0.5));
+      const x0 = Math.floor(fx), x1 = Math.min(w - 1, x0 + 1), tx = fx - x0;
+      const a = data[y0 * w + x0], b = data[y0 * w + x1];
+      const c = data[y1 * w + x0], d = data[y1 * w + x1];
+      out[y * S + x] = (a * (1 - tx) + b * tx) * (1 - ty) +
+                       (c * (1 - tx) + d * tx) * ty;
+    }
+  }
+  return out;
+}
+
+/** Perceptually ordered blue -> cyan -> yellow -> red, like matplotlib jet. */
+function heatColour(v) {
+  const stops = [[0, 0, 0, 140], [0.25, 0, 190, 220], [0.5, 90, 215, 90],
+                 [0.75, 255, 200, 40], [1, 225, 40, 30]];
+  for (let i = 1; i < stops.length; i++) {
+    if (v <= stops[i][0]) {
+      const [p0, r0, g0, b0] = stops[i - 1], [p1, r1, g1, b1] = stops[i];
+      const t = (v - p0) / (p1 - p0 || 1);
+      return [r0 + (r1 - r0) * t, g0 + (g1 - g0) * t, b0 + (b1 - b0) * t];
+    }
+  }
+  return [225, 40, 30];
+}
+
+/** Paint the frame with the CAM blended over it, weighted by activation. */
+function paintOverlay(canvas, cropCanvas, camUp, alphaMax = 0.62) {
+  const S = canvas.width;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(cropCanvas, 0, 0);
+  if (!camUp) return;
+  const img = ctx.getImageData(0, 0, S, S);
+  const d = img.data;
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const v = camUp[p];
+    // fade the overlay out where the model is not attending, so the
+    // underlying anatomy stays readable instead of being tinted everywhere
+    const a = alphaMax * Math.pow(v, 1.5);
+    const [r, g, b] = heatColour(v);
+    d[i] = d[i] * (1 - a) + r * a;
+    d[i + 1] = d[i + 1] * (1 - a) + g * a;
+    d[i + 2] = d[i + 2] * (1 - a) + b * a;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 /* ------------------------------------------------------------- inference --- */
 
 async function classify(img, truthLabel) {
@@ -219,6 +311,17 @@ async function classify(img, truthLabel) {
 
     const logits = out[state.session.outputNames[0]].data;
     const p = softmax2(logits[0], logits[1]);
+
+    // Grad-CAM, when the export carried the feature map and weights.
+    let camUp = null;
+    const fo = out["features"];
+    if (fo && state.meta.cam_weights) {
+      const cam = computeCAM(fo.data, fo.dims, state.meta.cam_weights,
+                             state.meta.cam_class ?? 1);
+      camUp = upsampleCAM(cam, meta.img_size);
+    }
+    state.lastCam = camUp;
+    state.lastCrop = cropCanvas;
     render(p, cropCanvas, truthLabel, dt);
     setStatus(`Done in ${dt.toFixed(0)} ms, locally.`);
   } catch (err) {
@@ -236,7 +339,9 @@ function render(p, cropCanvas, truthLabel) {
   const prev = $("preview");
   prev.width = cropCanvas.width;
   prev.height = cropCanvas.height;
-  prev.getContext("2d").drawImage(cropCanvas, 0, 0);
+  paintOverlay(prev, cropCanvas, state.showCam ? state.lastCam : null);
+  const btn = $("cam-toggle");
+  if (btn) btn.hidden = !state.lastCam;
 
   const v = $("verdict");
   v.textContent = isStd ? "Standard plane" : "Not a standard plane";
@@ -346,5 +451,19 @@ async function loadExamples() {
   }
 }
 
+function wireCamToggle() {
+  const btn = $("cam-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    state.showCam = !state.showCam;
+    btn.textContent = state.showCam ? "Hide what the model looked at"
+                                    : "Show what the model looked at";
+    btn.setAttribute("aria-pressed", String(state.showCam));
+    if (state.lastCrop) paintOverlay($("preview"), state.lastCrop,
+                                     state.showCam ? state.lastCam : null);
+  });
+}
+
+wireCamToggle();
 wireInput();
 init();
