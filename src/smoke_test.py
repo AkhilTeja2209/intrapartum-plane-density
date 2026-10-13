@@ -90,6 +90,44 @@ def make_fake_dataset(root: Path, n_videos: int = 20, seed: int = 0) -> Path:
     return root
 
 
+def make_fake_masks(root: Path, seed: int = 1) -> Path:
+    """Fake PS/FH masks over the fake frames, in the real encodings.
+
+    The two encodings are the point. Real train masks use {0, 7, 8} and real
+    val/test masks use {0, 127, 255}, nothing documents it, and reading one
+    with the other's table yields an all-zero mask and no error. Writing both
+    here means `decode_mask` is exercised on both every CI run.
+    """
+    from PIL import Image
+
+    rng = np.random.default_rng(seed)
+    idx = pd.read_csv(root / "index.csv")
+    idx = idx[idx.label == 1]                      # masks exist for positives
+    mdir = root / "masks"
+    mdir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    for i, (_, r) in enumerate(idx.iterrows()):
+        split = "train" if i % 5 < 3 else ("val" if i % 5 == 3 else "test")
+        ps_v, fh_v = (7, 8) if split == "train" else (127, 255)
+        m = np.zeros((128, 128), np.uint8)
+        y, x = int(rng.integers(30, 50)), int(rng.integers(30, 50))
+        m[y:y + 10, x:x + 10] = ps_v                       # small: symphysis
+        m[y + 14:y + 54, x - 4:x + 44] = fh_v              # large: fetal head
+        path = mdir / f"{r.video_id}_{int(r.frame_idx):06d}.png"
+        Image.fromarray(m).save(path)
+        rows.append({"video_id": r.video_id, "frame_idx": int(r.frame_idx),
+                     "orig_split": split, "mask_path": str(path),
+                     "frame_path": r.frame_path, "label": 1})
+
+    out = root / "masks.csv"
+    pd.DataFrame(rows).to_csv(out, index=False)
+    log.info("fake masks: %d (train/val/test %s)", len(rows),
+             "/".join(str(sum(1 for q in rows if q["orig_split"] == s))
+                      for s in ("train", "val", "test")))
+    return out
+
+
 def _check_label_parsing(failures: list) -> None:
     """Guard the two defects that left the real index with zero train labels.
 
@@ -328,6 +366,64 @@ conditions:
             _check(r.returncode == 0, "analyze produced tables", failures)
             _check((root / "report" / "summary.csv").exists(),
                    "summary.csv written", failures)
+
+            print("\n8. segmentation U-Net + Grad-CAM")
+            masks_csv = make_fake_masks(root)
+            r = subprocess.run(
+                [sys.executable, "-m", "src.train_unet",
+                 "--masks", str(masks_csv), "--index", str(root / "index.csv"),
+                 "--splits", str(root / "splits.json"),
+                 "--frames-dir", str(root / "frames"),
+                 "--img-size", "64", "--batch-size", "4", "--epochs", "1",
+                 "--out-dir", str(root / "results" / "unet")],
+                capture_output=True, text=True)
+            if r.returncode != 0:
+                print(r.stdout[-3000:], r.stderr[-3000:])
+            _check(r.returncode == 0, "U-Net trained and scored", failures)
+
+            unet_res = root / "results" / "unet" / "results.json"
+            if unet_res.exists():
+                import json as _json
+                u = _json.loads(unet_res.read_text())
+                d = u["test"]["dice_image"]
+                _check(len(d) == 3 and all(0 <= x <= 1 for x in d),
+                       f"per-class Dice in range (fg mean "
+                       f"{u['test']['mean_fg_image']:.3f})", failures)
+                # imported here, not at module scope: src.train_unet pulls in
+                # torch, and the non-torch stages above must still run without it
+                from .train_unet import SCORE_RULES
+                _check(set(u["derived_classifier"]["rules"]) == set(SCORE_RULES),
+                       "every area-aggregation rule was scored", failures)
+
+            # Grad-CAM on the frame arm, with the U-Net supplying masks for
+            # the negatives -- the path that has no ground truth to fall back
+            # on, so a silent failure there would otherwise reach the write-up.
+            ckpt = root / "results" / "smoke_sparse__frame__seed0" / "best.pt"
+            if ckpt.exists():
+                r = subprocess.run(
+                    [sys.executable, "-m", "src.gradcam",
+                     "--checkpoint", str(ckpt), "--index", str(root / "index.csv"),
+                     "--masks", str(masks_csv), "--splits", str(root / "splits.json"),
+                     "--frames-dir", str(root / "frames"), "--img-size", "64",
+                     "--n", "8", "--n-overlays", "1", "--on", "all",
+                     "--unet", str(root / "results" / "unet" / "best.pt"),
+                     "--out-dir", str(root / "report" / "gradcam")],
+                    capture_output=True, text=True)
+                if r.returncode != 0:
+                    print(r.stdout[-3000:], r.stderr[-3000:])
+                _check(r.returncode == 0, "Grad-CAM ran on both classes", failures)
+                att = root / "report" / "gradcam" / "attention.json"
+                if att.exists():
+                    import json as _json
+                    j = _json.loads(att.read_text())
+                    _check(j["attention_ratio_mean"] > 0,
+                           f"attention ratio computed "
+                           f"({j['attention_ratio_mean']:.2f})", failures)
+                    _check(set(j.get("by_class", {})) ==
+                           {"standard", "non_standard"},
+                           "attention reported for both classes", failures)
+            else:
+                _check(False, "frame checkpoint missing for Grad-CAM", failures)
         except ImportError:
             print("  [SKIP] torch not installed -- steps 6-7 skipped.")
             print("         Non-GPU stages all passed, so your data logic is fine.")

@@ -73,10 +73,20 @@ class ResUNet(nn.Module):
     """
 
     def __init__(self, n_classes: int = 3, pretrained: bool = True,
-                 in_ch: int = 1):
+                 in_ch: int = 1, arch: str = "resnet18"):
         super().__init__()
-        w = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-        net = models.resnet18(weights=w)
+        # resnet18 and resnet34 differ only in how many BasicBlocks sit in each
+        # stage, not in the stage widths (64/128/256/512), so the decoder below
+        # is unchanged between them.
+        try:
+            ctor = {"resnet18": models.resnet18, "resnet34": models.resnet34}[arch]
+            wts = {"resnet18": models.ResNet18_Weights,
+                   "resnet34": models.ResNet34_Weights}[arch]
+        except KeyError:
+            raise ValueError(f"unsupported encoder {arch!r}; this decoder "
+                             f"assumes 64/128/256/512 stage widths")
+        self.arch = arch
+        net = ctor(weights=wts.IMAGENET1K_V1 if pretrained else None)
 
         if in_ch != 3:
             old = net.conv1

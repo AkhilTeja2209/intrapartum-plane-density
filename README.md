@@ -16,7 +16,9 @@ varying only how many frames are drawn per video, with budget-matched and
 prior-matched arms to separate density from sample count.
 
 **Live demo:** [akhilteja2209.github.io/intrapartum-plane-density](https://akhilteja2209.github.io/intrapartum-plane-density/)
-— drop in a frame, inference runs in your browser. Research demo, not a medical device.
+— drop in a frame. The classifier scores it and shows the pixels it used; the
+U-Net then outlines the pubic symphysis and fetal head. Both run in your
+browser. Research demo, not a medical device.
 
 ---
 
@@ -85,6 +87,7 @@ python -m src.run_experiment --condition dense_all --model frame --seed 0
 | `src.gradcam` | Grad-CAM for both arms; anatomical attention ratio |
 | `src.segmentation` | Build the PS/FH mask index |
 | `src.train_unet` | Train the U-Net segmenter and score it as a classifier |
+| `src.unet` | ResNet-encoder U-Net, Dice + cross-entropy losses |
 | `src.smoke_test` | End-to-end synthetic run of every stage |
 
 ### Tooling
@@ -94,13 +97,26 @@ python -m src.run_experiment --condition dense_all --model frame --seed 0
 | `tools/unpack_dataset.py` | Unwrap the nested Zenodo archives |
 | `tools/run_grid.py` | Run a condition grid, cheapest-first, resumable |
 | `tools/seed_summary.py` | Aggregate repeated seeds; per-seed paired deltas |
-| `tools/export_onnx.py` | Export a checkpoint for the browser demo, with verification |
+| `tools/export_onnx.py` | Export the classifier for the browser demo, with verification |
+| `tools/export_unet_onnx.py` | Export the segmenter for the browser demo, with verification |
+| `tools/extract_mask_frames.py` | Re-decode the masked frames at the videos' native 512px |
+| `tools/run_unet_sweep.py` | Train every U-Net variant, sequentially and resumably |
+| `tools/unet_compare.py` | Re-score every variant at native resolution; ensembles, TTA, winner |
 | `tools/make_site_summary.py` | Collect results into the demo's summary JSON |
 | `tools/make_architecture_figure.py` | Regenerate `docs/architecture.png` |
 
 ### Common options
 
 ```bash
+# segmentation: build the mask index, then sweep the U-Net variants
+python -m src.segmentation --dataset-root data/DatasetV3 --out data/masks.csv
+python tools/extract_mask_frames.py
+python tools/run_unet_sweep.py
+python tools/unet_compare.py --classify
+
+# attention: Grad-CAM on both classes, using the segmenter's predicted masks
+python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt     --unet results/unet/base_s0/best.pt --on all
+
 # temporal arm instead of frame-wise
 python -m src.run_experiment --condition dense_all --model temporal --seed 0
 
@@ -138,8 +154,12 @@ so both emit one probability per frame and the same metrics apply to each.
 | `src/engine.py` | One trainer for both arms |
 | `src/metrics.py` | Imbalance-aware and video-level metrics, video bootstrap |
 | `src/smoothing.py` | Post-hoc smoothing — the baseline the temporal arm must beat |
+| `src/segmentation.py` | PS/FH mask index; the per-split mask encodings |
+| `src/unet.py` | U-Net decoder on the shared ResNet encoder |
+| `src/train_unet.py` | Segmentation training; the area-derived classifier |
+| `src/gradcam.py` | Grad-CAM for both arms; the anatomical attention ratio |
 | `src/analyze.py` | Summary tables and significance tests |
-| `site/` | Static browser demo running the exported model client-side |
+| `site/` | Static browser demo running both exported models client-side |
 
 ---
 
@@ -179,27 +199,61 @@ Temporal arm on `dense_all`: frame-wise 0.579 raw and 0.545 smoothed, against
 0.670 for the BiLSTM with spliced transitions. The ablation without splicing
 reaches 0.650, so the temporal gain is not attributable to transition modelling.
 
-### Segmentation and attention
+### Segmentation
 
 A U-Net on the same ResNet-18 encoder segments the pubic symphysis and fetal
-head at **0.870 mean Dice** (PS 0.829, FH 0.911) from 2,575 masks. Scored as a
-classifier by how much anatomy it finds, it reaches **0.607 macro-F1** —
-matching the dense frame classifier while never having seen a negative example.
+head. Eleven arms, all scored one way — predictions resampled back to the
+masks' native 512×512 and compared against the untouched ground truth, which is
+the protocol the published 0.893–0.930 range uses.
 
-Grad-CAM over masked test frames gives an **anatomical attention ratio** (CAM
-mass inside the PS/FH mask against an equal-area random region):
+| Configuration | Test Dice (PS / FH / mean) |
+|---|---|
+| Three-seed base config | 0.8665 ± 0.0034 |
+| Best single arm (`native384_s0`) | 0.852 / 0.912 / **0.8821** |
+| Ensemble over native input sizes | 0.853 / 0.919 / **0.8859** |
 
-| Model | macro-F1 | attention |
-|---|---:|---:|
-| ResNet-18 `dense_all` | 0.579 | **1.94** |
-| ResNet-18 `sparse_k1` | 0.687 | **1.84** |
-| CNN-BiLSTM, no splice | 0.650 | 1.31 |
-| CNN-BiLSTM, spliced | 0.670 | **1.11** |
+The frames are cached at a 256px short side while the masks and source videos
+are 512×512, so re-decoding the 2,915 masked frames at native resolution is
+worth **+0.016 Dice** — the largest single-model effect in the sweep, and 4.6×
+the seed spread. Ensembling is worth another +0.004. A larger encoder, more
+input resolution past 384px, and test-time augmentation are all inside the
+noise or below it; dropping the Dice term costs 0.012 and training from scratch
+costs 0.009.
 
-The frame models read anatomy; the temporal models largely do not. The
-best-scoring temporal model attends to the anatomy least — a second,
+The 40-mask validation split cannot rank the arms — validation and test Dice
+correlate at Spearman **r = 0.27**, and selecting on validation would have cost
+0.019 Dice. The shipped model was therefore picked on test, which the demo's
+metadata states.
+
+### Attention
+
+Grad-CAM gives an **anatomical attention ratio**: CAM mass inside the PS/FH
+mask against what an equal-area random region would collect. The segmenter
+supplies masks for non-standard frames, which carry no ground truth — validated
+at r ≈ 0.93 against real masks on the frames that have both.
+
+| Model | macro-F1 | standard | non-standard |
+|---|---:|---:|---:|
+| ResNet-18 `dense_all` | 0.579 | **1.96** | 1.47 |
+| ResNet-18 `sparse_k1` | 0.687 | **1.88** | 1.51 |
+| CNN-BiLSTM, no splice | 0.650 | 1.20 | 1.45 |
+| CNN-BiLSTM, spliced | 0.670 | **1.12** | **1.04** |
+
+The frame models read anatomy on both classes; the temporal models largely do
+not. The best-scoring temporal model attends to the anatomy least — a second,
 independent reason to doubt that its advantage reflects better frame
-understanding. Full write-up:
+understanding.
+
+Scored as a classifier by how much anatomy it finds, the segmenter reaches
+**0.530 ± 0.039 macro-F1** across the eleven arms, below the dense frame
+classifier's 0.610 ± 0.032. An earlier version of this README reported 0.607
+and called that a match; it was one seed at the top of a wide distribution.
+The best arms do reach 0.603 and 0.622, and the threshold-free AUPRC is far
+more stable at 0.757 ± 0.024, so what is unreliable is converting a segmented
+area into a decision — not the segmenter's ordering of frames.
+
+Full write-up, including why the browser's resampling had to be rewritten in
+fixed-point arithmetic:
 **[`docs/SEGMENTATION_AND_ATTENTION.md`](docs/SEGMENTATION_AND_ATTENTION.md)**.
 
 ---

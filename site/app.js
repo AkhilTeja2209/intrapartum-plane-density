@@ -13,7 +13,13 @@
 
 const $ = (id) => document.getElementById(id);
 const state = { session: null, meta: null, busy: false,
-                showCam: true, lastCam: null, lastCrop: null };
+                showCam: true, lastCam: null, lastCrop: null,
+                // stage two: the segmenter is a second model and a second
+                // download, so it is fetched on request and then reused
+                segSession: null, segMeta: null, segLoading: null,
+                showSeg: true, lastSeg: null, lastSegBase: null,
+                lastImg: null, lastRef: null, lastRefProb: null,
+                lastIsStd: null };
 
 function setStatus(msg, isError = false) {
   const el = $("status");
@@ -43,6 +49,7 @@ async function init() {
       graphOptimizationLevel: "all",
     });
     setStatus("Model ready.");
+    loadSegMeta();
   } catch (err) {
     console.error(err);
     setStatus(`Could not load the model: ${err.message}`, true);
@@ -107,26 +114,53 @@ function bilinearWeights(inSize, outSize) {
       sum += v;
     }
     if (sum > 0) for (let k = 0; k < w.length; k++) w[k] /= sum;
-    rows.push({ xmin, w });
+    // quantise once, here, exactly as Pillow's normalize_coeffs_8bpc does
+    const k = new Float64Array(w.length);
+    for (let j = 0; j < w.length; j++) k[j] = Math.round(w[j] * PRECISION_SCALE);
+    rows.push({ xmin, w, k });
   }
   return rows;
 }
+
+/* Pillow does not accumulate 8-bit resampling in floating point. It quantises
+ * each normalised weight to a 22-bit fixed-point integer, sums in integers
+ * with a half-LSB offset, and shifts back down:
+ *
+ *     k[i]  = round(w[i] * (1 << 22))
+ *     acc   = (1 << 21) + sum(pixel[i] * k[i])
+ *     out   = clip8(acc >> 22)
+ *
+ * Rounding the float sum instead is not equivalent, and the difference is not
+ * academic. On a 256 -> 384 upscale a third of the output pixels land on an
+ * exact half-way blend of two neighbours, so float rounding and fixed-point
+ * rounding disagree on **14.5% of pixels** by up to two 8-bit levels, which
+ * moved the segmenter's area score by 2.6e-3 relative against PyTorch.
+ * Reproducing the fixed-point path matches Pillow on every one of the 147,456
+ * pixels. A downscale hides this -- ties are rare there -- which is why the
+ * classifier path looked fine with float accumulation.
+ */
+const PRECISION_BITS = 22;
+const PRECISION_SCALE = 1 << PRECISION_BITS;      // 4194304
 
 /** One separable pass. Pillow rounds to 8-bit between passes, so we do too. */
 function resamplePass(src, inW, inH, outLen, rows, horizontal) {
   const outW = horizontal ? outLen : inW;
   const outH = horizontal ? inH : outLen;
   const dst = new Float64Array(outW * outH);
+  const half = PRECISION_SCALE / 2;
   for (let y = 0; y < outH; y++) {
     for (let x = 0; x < outW; x++) {
       const r = rows[horizontal ? x : y];
-      let acc = 0;
-      for (let k = 0; k < r.w.length; k++) {
-        acc += r.w[k] * (horizontal
+      // r.k holds the already-quantised weights; the products reach ~3e9,
+      // which overflows int32 but is exact in a double, so accumulate there.
+      let acc = half;
+      for (let k = 0; k < r.k.length; k++) {
+        acc += r.k[k] * (horizontal
           ? src[y * inW + (r.xmin + k)]
           : src[(r.xmin + k) * inW + x]);
       }
-      dst[y * outW + x] = Math.min(255, Math.max(0, Math.round(acc)));
+      const v = Math.floor(acc / PRECISION_SCALE);
+      dst[y * outW + x] = v < 0 ? 0 : v > 255 ? 255 : v;
     }
   }
   return { data: dst, w: outW, h: outH };
@@ -291,13 +325,303 @@ function paintOverlay(canvas, cropCanvas, camUp, alphaMax = 0.62) {
   ctx.putImageData(img, 0, 0);
 }
 
+/* ------------------------------------------------- stage two: the U-Net --- */
+
+/**
+ * The segmenter's preprocessing is NOT the classifier's.
+ *
+ *   classifier   Grayscale -> Resize(short side 255) -> CenterCrop(224)
+ *   segmenter    Grayscale -> Resize(S, S)            (no crop at all)
+ *
+ * and the segmenter normalises with the single-channel grey statistics rather
+ * than the three ImageNet ones. Reusing the classifier's crop here would
+ * produce masks that look plausible and sit in the wrong place, so the two
+ * pipelines are kept separate and every constant comes from unet_meta.json.
+ */
+function preprocessSeg(img, sm) {
+  const S = sm.img_size;
+  const { mean, std } = sm.preprocess;
+
+  const c0 = document.createElement("canvas");
+  c0.width = img.naturalWidth;
+  c0.height = img.naturalHeight;
+  const x0 = c0.getContext("2d", { willReadFrequently: true });
+  x0.drawImage(img, 0, 0);
+  const nat = x0.getImageData(0, 0, c0.width, c0.height);
+  toGrayscaleInPlace(nat.data);
+
+  const W = c0.width, H = c0.height;
+  const plane = new Float64Array(W * H);
+  for (let i = 0, p = 0; i < nat.data.length; i += 4, p++) plane[p] = nat.data[i];
+
+  // square resize, both axes independently -- Pillow's own two-pass geometry
+  const hz = resamplePass(plane, W, H, S, bilinearWeights(W, S), true);
+  const vt = resamplePass(hz.data, hz.w, hz.h, S, bilinearWeights(H, S), false);
+
+  const tensor = new Float32Array(S * S);
+  const base = document.createElement("canvas");
+  base.width = base.height = S;
+  const xc = base.getContext("2d", { willReadFrequently: true });
+  const bi = xc.createImageData(S, S);
+  for (let p = 0; p < S * S; p++) {
+    const g = vt.data[p];
+    tensor[p] = (g / 255 - mean) / std;
+    const q = p * 4;
+    bi.data[q] = bi.data[q + 1] = bi.data[q + 2] = g;
+    bi.data[q + 3] = 255;
+  }
+  xc.putImageData(bi, 0, 0);
+  return { tensor, baseCanvas: base };
+}
+
+/** Per-pixel softmax over the three classes, plus argmax and soft areas. */
+function readSegLogits(logits, S) {
+  const area = S * S;
+  const cls = new Uint8Array(area);
+  let sumPS = 0, sumFH = 0;
+  for (let p = 0; p < area; p++) {
+    const a = logits[p], b = logits[area + p], c = logits[2 * area + p];
+    const m = Math.max(a, b, c);
+    const ea = Math.exp(a - m), eb = Math.exp(b - m), ec = Math.exp(c - m);
+    const z = ea + eb + ec;
+    const pa = ea / z, pb = eb / z, pc = ec / z;
+    sumPS += pb;
+    sumFH += pc;
+    cls[p] = pa >= pb && pa >= pc ? 0 : (pb >= pc ? 1 : 2);
+  }
+  // Soft areas, i.e. mean probability per class -- the same quantity
+  // src/train_unet.py scores frames with, so the number shown here is the
+  // number the decision was made on.
+  return { cls, ps: sumPS / area, fh: sumFH / area, S };
+}
+
+/** The aggregation rule chosen on the validation split, not on test. */
+function planeScore(seg, rule) {
+  switch (rule) {
+    case "geomean": return Math.sqrt(Math.max(0, seg.ps * seg.fh));
+    case "ps": return seg.ps;
+    case "fh": return seg.fh;
+    case "sum": return seg.ps + seg.fh;
+    default: return Math.min(seg.ps, seg.fh);
+  }
+}
+
+/** Translucent fill plus a hard boundary, so small structures stay visible. */
+function paintSeg(canvas, baseCanvas, seg, colours, show) {
+  const S = canvas.width;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(baseCanvas, 0, 0);
+  if (!seg || !show) return;
+
+  const col = [null, colours.pubic_symphysis, colours.fetal_head];
+  const img = ctx.getImageData(0, 0, S, S);
+  const d = img.data;
+  const { cls } = seg;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const p = y * S + x;
+      const c = cls[p];
+      if (!c) continue;
+      // boundary if any 4-neighbour belongs to a different class
+      const edge =
+        (x === 0 || cls[p - 1] !== c) || (x === S - 1 || cls[p + 1] !== c) ||
+        (y === 0 || cls[p - S] !== c) || (y === S - 1 || cls[p + S] !== c);
+      const a = edge ? 1.0 : 0.3;
+      const [r, g, b] = col[c];
+      const q = p * 4;
+      d[q] = d[q] * (1 - a) + r * a;
+      d[q + 1] = d[q + 1] * (1 - a) + g * a;
+      d[q + 2] = d[q + 2] * (1 - a) + b * a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/** Metadata only: a few kB, so the header can describe stage two before the
+ *  visitor decides whether to download it. */
+async function loadSegMeta() {
+  try {
+    state.segMeta = await (await fetch("model/unet_meta.json")).json();
+    renderSegModelLine(state.segMeta);
+    const b = $("seg-run");
+    if (b) b.textContent =
+      `Outline the anatomy — fetches a ${state.segMeta.onnx_mb} MB model`;
+  } catch {
+    /* stage two is optional; stage one still works without it */
+  }
+}
+
+async function ensureSegSession() {
+  if (state.segSession) return state.segSession;
+  if (state.segLoading) return state.segLoading;
+
+  state.segLoading = (async () => {
+    if (!state.segMeta) await loadSegMeta();
+    setStatus(`Fetching the segmentation model (${state.segMeta.onnx_mb} MB)…`);
+    state.segSession = await ort.InferenceSession.create("model/unet.onnx", {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+    return state.segSession;
+  })();
+  try {
+    return await state.segLoading;
+  } finally {
+    state.segLoading = null;
+  }
+}
+
+function renderSegModelLine(sm) {
+  const d = sm.test_dice || {};
+  const m = sm.derived_metrics || {};
+  const parts = [
+    `stage 2: ${sm.arch} U-Net · ${sm.img_size}px`,
+    d.mean_foreground != null
+      ? `test Dice ${d.mean_foreground.toFixed(3)} (PS ${
+          d.pubic_symphysis.toFixed(3)}, FH ${d.fetal_head.toFixed(3)})`
+      : null,
+    d.n_masks != null ? `${d.n_masks} held-out masks` : null,
+    m.macro_f1 != null
+      ? `area-derived macro-F1 ${m.macro_f1.toFixed(3)}` : null,
+    sm.quantised ? `${sm.onnx_mb} MB int8` : `${sm.onnx_mb} MB`,
+  ].filter(Boolean);
+  const el = $("seg-model-line");
+  if (el) el.textContent = parts.join("  ·  ");
+}
+
+async function segment(img) {
+  const sess = await ensureSegSession();
+  const sm = state.segMeta;
+  const S = sm.img_size;
+  const { tensor, baseCanvas } = preprocessSeg(img, sm);
+
+  const t0 = performance.now();
+  const out = await sess.run({
+    input: new ort.Tensor("float32", tensor, [1, 1, S, S]),
+  });
+  const dt = performance.now() - t0;
+
+  const seg = readSegLogits(out[sess.outputNames[0]].data, S);
+  state.lastSeg = seg;
+  state.lastSegBase = baseCanvas;
+  renderSeg(seg, dt);
+  return seg;
+}
+
+function renderSeg(seg, dt) {
+  const sm = state.segMeta;
+  const cv = $("segcanvas");
+  cv.width = cv.height = seg.S;
+  paintSeg(cv, state.lastSegBase, seg, sm.colours, state.showSeg);
+
+  const pct = (v) => `${(100 * v).toFixed(2)}% of frame`;
+  $("area-ps").textContent = pct(seg.ps);
+  $("area-fh").textContent = pct(seg.fh);
+
+  const rule = sm.derived_rule || "min";
+  const score = planeScore(seg, rule);
+  const thr = Number(sm.derived_threshold);
+  const isStd = score >= thr;
+  const v = $("seg-verdict");
+  v.textContent = isStd
+    ? "Enough of both structures to measure"
+    : "Not enough of both structures";
+  v.classList.toggle("pos", isStd);
+  v.classList.toggle("neg", !isStd);
+
+  const ruleText = { min: "the smaller of the two areas",
+                     geomean: "the geometric mean of the two areas",
+                     ps: "the symphysis area alone",
+                     fh: "the head area alone",
+                     sum: "the two areas added" }[rule] || rule;
+  $("seg-note").textContent =
+    `This is a second, independent opinion, made only out of what was drawn: ` +
+    `${ruleText} is ${score.toExponential(2)} against a threshold of ` +
+    `${thr.toExponential(2)} picked on the validation split.`;
+
+  // The two stages are trained on different supervision and can disagree.
+  // Saying so is the point of showing both: the cascade's error is the sum of
+  // its stages', and a visitor should see where that comes from.
+  const m = sm.derived_metrics || {};
+  const disagree = state.lastIsStd != null && state.lastIsStd !== isStd;
+  $("seg-note").textContent += disagree
+    ? ` The two stages disagree on this frame — stage one says ${
+        state.lastIsStd ? "standard" : "not standard"} and stage two says ${
+        isStd ? "standard" : "not standard"}.`
+    : "";
+  $("seg-caveat").textContent = m.recall_standard != null
+    ? `Read it with its error profile in mind: every mask in the training set ` +
+      `is a standard plane, so the segmenter has never been shown a negative ` +
+      `and over-calls them — recall ${m.recall_standard.toFixed(2)} against ` +
+      `specificity ${Number(m.specificity).toFixed(2)} on ` +
+      `${Number(m.n).toLocaleString()} held-out frames.`
+    : "";
+
+  $("seg-out").hidden = false;
+  if (dt != null) setStatus(`Segmented in ${dt.toFixed(0)} ms, locally.`);
+
+  // The export records what PyTorch produced for each bundled example, so the
+  // browser pipeline can be checked rather than trusted.
+  const ref = state.lastRef && sm.example_refs
+    ? sm.example_refs[state.lastRef] : null;
+  if (ref) {
+    console.log("segmentation vs PyTorch reference:",
+      { ps: [seg.ps, ref.areas.pubic_symphysis],
+        fh: [seg.fh, ref.areas.fetal_head],
+        score: [score, ref.score],
+        maxRelDiff: Math.max(
+          Math.abs(seg.ps - ref.areas.pubic_symphysis) / ref.areas.pubic_symphysis,
+          Math.abs(seg.fh - ref.areas.fetal_head) / ref.areas.fetal_head) });
+  }
+}
+
+function wireSeg() {
+  const run = $("seg-run");
+  if (run) {
+    run.addEventListener("click", async () => {
+      if (!state.lastImg) { setStatus("Load a frame first.", true); return; }
+      run.disabled = true;
+      try {
+        await segment(state.lastImg);
+        $("seg-run").hidden = true;
+        $("seg-intro").hidden = true;
+      } catch (err) {
+        console.error(err);
+        setStatus(`Segmentation failed: ${err.message}`, true);
+      } finally {
+        run.disabled = false;
+      }
+    });
+  }
+
+  const tog = $("seg-toggle");
+  if (tog) {
+    tog.addEventListener("click", () => {
+      state.showSeg = !state.showSeg;
+      tog.textContent = state.showSeg ? "Hide the outline" : "Show the outline";
+      tog.setAttribute("aria-pressed", String(state.showSeg));
+      if (state.lastSegBase) {
+        paintSeg($("segcanvas"), state.lastSegBase, state.lastSeg,
+                 state.segMeta.colours, state.showSeg);
+      }
+    });
+  }
+}
+
 /* ------------------------------------------------------------- inference --- */
 
-async function classify(img, truthLabel) {
+async function classify(img, truthLabel, refKey = null, refProb = null) {
   if (!state.session) { setStatus("Model is still loading…", true); return; }
   if (state.busy) return;
   state.busy = true;
   setStatus("Running…");
+  state.lastImg = img;
+  state.lastRef = refKey;
+  state.lastRefProb = refProb;
+  // a new frame invalidates the old masks; stage two re-runs below only if
+  // its model is already in memory, so a visitor never pays for it twice
+  state.lastSeg = null;
+  $("seg-out").hidden = true;
 
   try {
     const meta = state.meta;
@@ -322,8 +646,27 @@ async function classify(img, truthLabel) {
     }
     state.lastCam = camUp;
     state.lastCrop = cropCanvas;
+
+    // examples.json carries the probability PyTorch produced for each bundled
+    // frame, so the browser pipeline can be checked instead of trusted. A
+    // preprocessing drift shows up here as a difference in the third decimal.
+    if (state.lastRefProb != null) {
+      console.log("classifier vs PyTorch reference:",
+        { browser: p, pytorch: state.lastRefProb,
+          absDiff: Math.abs(p - state.lastRefProb) });
+    }
     render(p, cropCanvas, truthLabel, dt);
     setStatus(`Done in ${dt.toFixed(0)} ms, locally.`);
+
+    if (state.segSession) {
+      try {
+        await segment(img);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Segmentation failed: ${err.message}`, true);
+        $("seg-run").hidden = false;          // leave a way to retry
+      }
+    }
   } catch (err) {
     console.error(err);
     setStatus(`Inference failed: ${err.message}`, true);
@@ -335,6 +678,7 @@ async function classify(img, truthLabel) {
 function render(p, cropCanvas, truthLabel) {
   const thr = Number(state.meta.threshold);
   const isStd = p >= thr;
+  state.lastIsStd = isStd;
 
   const prev = $("preview");
   prev.width = cropCanvas.width;
@@ -439,7 +783,7 @@ async function loadExamples() {
       b.addEventListener("click", async () => {
         try {
           const img = await imageFromBlobOrURL(ex.file);
-          await classify(img, ex.label);
+          await classify(img, ex.label, ex.file, ex.reference_prob);
         } catch (err) {
           setStatus(err.message, true);
         }
@@ -465,5 +809,6 @@ function wireCamToggle() {
 }
 
 wireCamToggle();
+wireSeg();
 wireInput();
 init();

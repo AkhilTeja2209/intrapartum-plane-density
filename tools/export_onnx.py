@@ -187,6 +187,12 @@ def main() -> int:
     # output probability by ~0.04 on a borderline frame. PNG is lossless, so
     # the built-in examples reproduce the PyTorch reference exactly. Uploaded
     # JPEGs keep the decoder difference; the page says so.
+    #
+    # The example is saved as the WHOLE frame, not this model's 224px centre
+    # crop. The page then applies each stage's own preprocessing to it, the way
+    # it would to an upload -- the classifier crops, the segmenter does not. A
+    # pre-cropped example would make the segmentation stage quietly operate on
+    # a crop of a crop.
     from PIL import Image
 
     ex_dir = out_dir.parent / "examples"

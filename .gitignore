@@ -38,4 +38,5 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+.claude/
 tools/__pycache__/

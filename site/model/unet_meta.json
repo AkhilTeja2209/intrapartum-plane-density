@@ -1,0 +1,108 @@
+{
+  "run": "results/unet/native384_s0",
+  "arch": "resnet18",
+  "img_size": 384,
+  "config": {
+    "img_size": 384,
+    "arch": "resnet18",
+    "loss": "ce_dice",
+    "pretrained": true,
+    "augment": true,
+    "tta": false,
+    "seed": 0,
+    "lr": 0.0003,
+    "epochs": 40,
+    "batch_size": 8
+  },
+  "preprocess": {
+    "grayscale": true,
+    "resize": [
+      384,
+      384
+    ],
+    "mean": 0.449,
+    "std": 0.226,
+    "note": "direct square resize, no crop -- unlike the classifier, which resizes the short side and centre-crops"
+  },
+  "classes": [
+    "background",
+    "pubic_symphysis",
+    "fetal_head"
+  ],
+  "colours": {
+    "pubic_symphysis": [
+      255,
+      196,
+      46
+    ],
+    "fetal_head": [
+      64,
+      174,
+      255
+    ]
+  },
+  "test_dice": {
+    "pubic_symphysis": 0.8521676105032753,
+    "fetal_head": 0.911937010087201,
+    "mean_foreground": 0.8820523102952381,
+    "n_masks": 300,
+    "estimator": "per-image mean, classes present only",
+    "resolution": 512
+  },
+  "selection": {
+    "basis": "best single arm on the held-out test masks",
+    "validation_would_have_chosen": "base_s1",
+    "validation_rank_correlation": 0.27272727272727276,
+    "seed_spread_std": 0.0034269570432173763
+  },
+  "derived_rule": "geomean",
+  "derived_threshold": 0.05,
+  "derived_metrics": {
+    "macro_f1": 0.6032590894004883,
+    "balanced_accuracy": 0.6326768476903446,
+    "auprc": 0.7596375494932422,
+    "recall_standard": 0.9757362090418913,
+    "specificity": 0.2896174863387978,
+    "n": 8665
+  },
+  "onnx_mb": 57.28,
+  "quantised": false,
+  "verify": {
+    "n_frames": 60,
+    "max_abs_logit_diff": 6.413459777832031e-05,
+    "dice_torch": 0.891287616947601,
+    "dice_onnx_fp32": 0.891287616947601,
+    "dice_onnx_int8": null
+  },
+  "example_refs": {
+    "examples/standard_0.png": {
+      "areas": {
+        "pubic_symphysis": 0.03024068847298622,
+        "fetal_head": 0.2289917767047882
+      },
+      "score": 0.08321579545736313
+    },
+    "examples/standard_1.png": {
+      "areas": {
+        "pubic_symphysis": 0.023943768814206123,
+        "fetal_head": 0.20383480191230774
+      },
+      "score": 0.06986110657453537
+    },
+    "examples/nonstandard_0.png": {
+      "areas": {
+        "pubic_symphysis": 0.022911451756954193,
+        "fetal_head": 0.20755524933338165
+      },
+      "score": 0.06895935535430908
+    },
+    "examples/nonstandard_1.png": {
+      "areas": {
+        "pubic_symphysis": 0.0008201075252145529,
+        "fetal_head": 0.00561848608776927
+      },
+      "score": 0.002146570011973381
+    }
+  },
+  "dataset": "IUGC 2024 (Zenodo 10.5281/zenodo.17655183), CC-BY-4.0"
+}

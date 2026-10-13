@@ -6,7 +6,7 @@
 <title>Intrapartum Standard-Plane Classifier — research demo</title>
 <meta name="description" content="Research demo: a ResNet-18 trained on the IUGC 2024 intrapartum ultrasound dataset, running in your browser. Not a medical device.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫀</text></svg>">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -20,12 +20,14 @@
 <header class="wrap">
   <h1>Standard-plane classification in intrapartum ultrasound</h1>
   <p class="sub">
-    A ResNet-18 that scores a transperineal ultrasound frame for whether the
-    pubic symphysis and fetal head are both resolved well enough to measure
-    angle&nbsp;of&nbsp;progression. It runs entirely in your browser — the
-    image never leaves your device.
+    Two models over a transperineal ultrasound frame. A ResNet-18 scores it for
+    whether the pubic symphysis and fetal head are both resolved well enough to
+    measure angle&nbsp;of&nbsp;progression, and shows which pixels it used; a
+    U-Net then outlines both structures. Both run entirely in your browser —
+    the image never leaves your device.
   </p>
   <p class="meta" id="model-line">Loading model…</p>
+  <p class="meta" id="seg-model-line"></p>
 </header>
 
 <main class="wrap">
@@ -54,11 +56,12 @@
   </div>
 
   <div id="result" class="result" hidden>
+    <h3 class="stage-head">Stage one — is this a standard plane?</h3>
     <div class="result-grid">
       <figure class="preview">
         <canvas id="preview" width="224" height="224"></canvas>
-        <figcaption id="preview-cap">what the model looked at — Grad-CAM over
-          the 224&times;224 input</figcaption>
+        <figcaption id="preview-cap">what the classifier looked at — Grad-CAM
+          over its 224&times;224 centre crop</figcaption>
         <button id="cam-toggle" class="ex" type="button" aria-pressed="true"
                 hidden>Hide what the model looked at</button>
       </figure>
@@ -78,13 +81,44 @@
           reading anatomy, not scanner furniture.</p>
       </div>
     </div>
+
+    <div id="stage2" class="stage2">
+      <h3 class="stage-head">Stage two — where is the anatomy?</h3>
+      <p class="hint" id="seg-intro">A U-Net trained on the dataset's
+        pubic-symphysis and fetal-head masks will outline both structures. It is
+        a second model, so it is fetched only when you ask for it.</p>
+      <p><button id="seg-run" class="ex wide" type="button">Outline the
+        anatomy</button></p>
+
+      <div id="seg-out" class="result-grid" hidden>
+        <figure class="preview">
+          <canvas id="segcanvas" width="256" height="256"></canvas>
+          <figcaption>U-Net segmentation — the <em>whole</em> frame squared off,
+            not the crop above</figcaption>
+          <button id="seg-toggle" class="ex" type="button"
+                  aria-pressed="true">Hide the outline</button>
+        </figure>
+        <div class="verdict">
+          <ul class="legend">
+            <li><span class="chip chip-ps"></span> pubic symphysis
+              <b id="area-ps">—</b></li>
+            <li><span class="chip chip-fh"></span> fetal head
+              <b id="area-fh">—</b></li>
+          </ul>
+          <p class="verdict-label sm" id="seg-verdict">—</p>
+          <p class="hint" id="seg-note"></p>
+          <p class="hint" id="seg-caveat"></p>
+        </div>
+      </div>
+    </div>
   </div>
   <p id="status" class="status" role="status"></p>
 </section>
 
 <footer class="wrap">
   <p class="hint">
-    ResNet-18 trained on the IUGC 2024 intrapartum ultrasound dataset
+    ResNet-18 classifier and ResNet-18/U-Net segmenter, both trained on the
+    IUGC 2024 intrapartum ultrasound dataset
     (<a href="https://zenodo.org/records/17655183">Zenodo 10.5281/zenodo.17655183</a>,
     CC-BY-4.0). Inference runs locally via onnxruntime-web; no image is
     transmitted or stored. Method, results and code:
@@ -98,6 +132,10 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
-<script src="app.js"></script>
+<!-- The query is a cache buster. The page's preprocessing has to match
+     the shipped model exactly, so a browser holding a stale app.js
+     against a freshly exported graph is a correctness bug, not a
+     cosmetic one. Bump it whenever app.js or a model changes. -->
+<script src="app.js?v=2"></script>
 </body>
 </html>

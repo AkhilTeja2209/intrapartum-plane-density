@@ -195,7 +195,9 @@ footer { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line);
 footer p { margin: 0 0 8px; }
 
 @media (max-width: 560px) {
-  .preview canvas { width: 100%; height: auto; aspect-ratio: 1; }
+  /* the id selector on #segcanvas outranks .preview canvas, so it has to be
+     named here too or stage two stays pinned at 224px on a phone */
+  .preview canvas, #segcanvas { width: 100%; height: auto; aspect-ratio: 1; }
   .card { padding: 18px 16px; }
 }
 
@@ -203,3 +205,30 @@ footer p { margin: 0 0 8px; }
 #cam-toggle { margin-top: 8px; width: 100%; font-size: 12.5px; }
 .cam-note { margin-top: 12px; max-width: 42ch; }
 .preview figcaption { max-width: 224px; margin-left: auto; margin-right: auto; }
+
+/* ---- stage two: segmentation ---- */
+.stage-head {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--ink-soft);
+}
+.stage2 { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
+.stage2 .hint { max-width: 62ch; }
+#seg-intro { margin: 0 0 14px; }
+button.ex.wide { padding: 8px 16px; font-size: 14px; }
+#seg-toggle { margin-top: 8px; width: 100%; font-size: 12.5px; }
+
+.legend { list-style: none; margin: 0 0 14px; padding: 0; font-size: 14px; }
+.legend li { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.legend b { font-family: var(--mono); font-size: 13px; font-weight: 500;
+            color: var(--ink-soft); margin-left: auto; }
+.chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto;
+        border: 1px solid rgba(0, 0, 0, .25); }
+.chip-ps { background: rgb(255, 196, 46); }
+.chip-fh { background: rgb(64, 174, 255); }
+
+.verdict-label.sm { font-size: 17px; margin-bottom: 10px; }
+#segcanvas { width: 224px; height: 224px; }

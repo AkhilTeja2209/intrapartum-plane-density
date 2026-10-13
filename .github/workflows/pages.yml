@@ -26,15 +26,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The demo is a static page: HTML, CSS, JS, one ONNX graph and a few
-      # JPEGs. Nothing is built, so there is no toolchain to pin.
-      - name: Check the model artefact is present
+      # The demo is a static page: HTML, CSS, JS, two ONNX graphs and a few
+      # PNGs. Nothing is built, so there is no toolchain to pin.
+      - name: Check the model artefacts are present
         run: |
           test -f site/model/model.onnx || {
             echo "site/model/model.onnx is missing -- run tools/export_onnx.py"; exit 1; }
           test -f site/model/model_meta.json || {
             echo "site/model/model_meta.json is missing"; exit 1; }
+          test -f site/model/unet.onnx || {
+            echo "site/model/unet.onnx is missing -- run tools/export_unet_onnx.py"; exit 1; }
+          test -f site/model/unet_meta.json || {
+            echo "site/model/unet_meta.json is missing"; exit 1; }
           ls -lh site/model
+
+      # Pages rejects an artefact over 1 GB, and a page nobody can load is a
+      # failed deploy whatever the size limit says. Fail here with a readable
+      # message rather than in the browser.
+      - name: Check the payload is servable
+        run: |
+          total=$(du -sm site | cut -f1)
+          echo "site payload: ${total} MB"
+          test "$total" -lt 400 || {
+            echo "site/ is ${total} MB -- too heavy for a demo page"; exit 1; }
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

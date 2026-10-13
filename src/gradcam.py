@@ -11,6 +11,14 @@ using the anatomy at all -- it is reading depth markers, the scanner's UI
 overlay, the sector fan shape, or speckle statistics that happen to correlate
 with which hospital the video came from.
 
+Ground-truth masks exist only for standard planes, so the check could
+originally only be run on positives -- which leaves open the possibility that
+the model attends to anatomy when there is anatomy and to scanner furniture
+when there is not. `--unet` closes that: the segmenter predicts PS/FH masks for
+any frame, including negatives, so attention can be measured on both classes.
+Predicted masks are not ground truth, so the two are compared on the frames
+that have both before the predicted ones are used anywhere alone.
+
 This is the single most likely way this project produces a high number that
 means nothing. Three hospitals and several scanner models are represented, and
 if standard planes are not uniformly distributed across centres, a model can
@@ -27,6 +35,9 @@ target that frame's logit rather than the clip's.
 
     # temporal CNN-BiLSTM arm
     python -m src.gradcam --checkpoint results/dense_all__temporal__seed0/best.pt
+
+    # attention on NON-standard frames too, using the U-Net's predicted masks
+    python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt         --unet results/unet/base_s0/best.pt --on all
 """
 from __future__ import annotations
 
@@ -141,6 +152,27 @@ def overlay(grey: np.ndarray, cam: np.ndarray, alpha: float = 0.45) -> Image.Ima
     return Image.fromarray((np.clip(blend, 0, 1) * 255).astype(np.uint8))
 
 
+def load_unet(path: str, device):
+    """The segmenter, for predicting masks on frames that have none."""
+    from .unet import ResUNet
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    cfg = ck.get("cfg") or {}
+    size = int(cfg.get("img_size", ck.get("img_size", 256)))
+    m = ResUNet(3, pretrained=False, in_ch=1, arch=cfg.get("arch", "resnet18"))
+    m.load_state_dict(ck["model"])
+    return m.eval().to(device), size
+
+
+@torch.no_grad()
+def predict_mask(unet, size: int, img: Image.Image, out_size, device) -> np.ndarray:
+    """Binary PS+FH mask predicted for one frame, at `out_size`."""
+    a = np.asarray(img.resize((size, size), Image.BILINEAR), np.float32) / 255.0
+    x = torch.from_numpy((a - 0.449) / 0.226)[None, None].to(device)
+    pred = unet(x).argmax(1)[0].cpu().numpy().astype(np.uint8)
+    m = Image.fromarray(pred).resize(out_size, Image.NEAREST)
+    return (np.array(m) > 0).astype(np.uint8)
+
+
 def build_clip(index: pd.DataFrame, video_id: str, frame_idx: int, clip_len: int):
     """A clip of `clip_len` frames centred on frame_idx, clamped to the video."""
     g = index[index.video_id == video_id].sort_values("frame_idx")
@@ -169,7 +201,18 @@ def main() -> int:
     ap.add_argument("--img-size", type=int, default=224)
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--unet", default=None,
+                    help="U-Net checkpoint; enables predicted masks, and with "
+                         "--on all lets attention be measured on non-standard "
+                         "frames, which carry no ground-truth mask")
+    ap.add_argument("--on", default="masked", choices=["masked", "all"],
+                    help="'masked': the annotated frames only (all standard "
+                         "planes). 'all': a class-balanced sample of the split, "
+                         "which requires --unet.")
     a = ap.parse_args()
+    if a.on == "all" and not a.unet:
+        raise SystemExit("--on all needs --unet: non-standard frames have no "
+                         "ground-truth mask to measure attention against.")
 
     ckpt = torch.load(a.checkpoint, map_location="cpu", weights_only=False)
     cfg = ckpt["cfg"]
@@ -193,8 +236,32 @@ def main() -> int:
     masks = masks[masks.video_id.isin(splits[a.split])]
     if masks.empty:
         raise SystemExit(f"no masks for split {a.split!r}")
-    sel = masks.sample(min(a.n, len(masks)), random_state=a.seed)
-    log_.info("scoring %d masked frames from the %s split", len(sel), a.split)
+
+    unet, unet_size = (None, None)
+    if a.unet:
+        unet, unet_size = load_unet(a.unet, device)
+        log_.info("predicted masks from %s (%dpx)", a.unet, unet_size)
+
+    if a.on == "masked":
+        sel = masks.sample(min(a.n, len(masks)), random_state=a.seed)
+        log_.info("scoring %d annotated frames from the %s split "
+                  "(all of them standard planes)", len(sel), a.split)
+    else:
+        # A class-balanced sample of the split, so the ratio can be reported
+        # per class. Negatives have no ground-truth mask; the segmenter
+        # supplies one, which is why --on all requires --unet.
+        pool = index[index.video_id.isin(splits[a.split])]
+        half = a.n // 2
+        parts = []
+        for lab in (1, 0):
+            g = pool[pool.label == lab]
+            parts.append(g.sample(min(half, len(g)), random_state=a.seed))
+        sel = pd.concat(parts).sample(frac=1.0, random_state=a.seed)
+        sel["mask_path"] = None
+        sel["orig_split"] = a.split
+        log_.info("scoring %d frames from the %s split (%d standard, %d not)",
+                  len(sel), a.split, int((sel.label == 1).sum()),
+                  int((sel.label == 0).sum()))
 
     tf = build_transforms(a.img_size, train=False)
     frames_dir = Path(a.frames_dir)
@@ -213,12 +280,23 @@ def main() -> int:
             x = tf(img).unsqueeze(0).to(device)
             cam = cam_fn(x, cls=1)
 
-        m = load_mask(r.mask_path, r.orig_split, (a.img_size, a.img_size))
-        ratios.append(attention_ratio(cam, m, seed=a.seed))
+        grey_img = Image.open(frames_dir / r.frame_path).convert("L")
+        gt = (load_mask(r.mask_path, r.orig_split, (a.img_size, a.img_size))
+              if isinstance(r.mask_path, str) else None)
+        pm = (predict_mask(unet, unet_size, grey_img,
+                           (a.img_size, a.img_size), device)
+              if unet is not None else None)
+        m = gt if gt is not None else pm
+        if m is None or m.sum() == 0:
+            continue
+        ratios.append({"label": int(r.label),
+                       "gt": attention_ratio(cam, gt, seed=a.seed)
+                             if gt is not None else np.nan,
+                       "pred": attention_ratio(cam, pm, seed=a.seed)
+                               if pm is not None else np.nan})
 
         if made < a.n_overlays:
-            grey = np.array(Image.open(frames_dir / r.frame_path).convert("L")
-                            .resize((a.img_size, a.img_size)))
+            grey = np.array(grey_img.resize((a.img_size, a.img_size)))
             ov = overlay(grey, cam)
             # outline the ground-truth anatomy so the reader can judge the
             # heatmap against it rather than taking the ratio on trust
@@ -232,20 +310,64 @@ def main() -> int:
                 out / f"{r.video_id}_{int(r.frame_idx):06d}.png")
             made += 1
 
-    arr = np.array([v for v in ratios if np.isfinite(v)])
+    df = pd.DataFrame(ratios)
+
+    def summarise(v: np.ndarray) -> dict:
+        v = np.asarray([x for x in v if np.isfinite(x)], dtype=float)
+        if not len(v):
+            return {}
+        return {"n": int(len(v)), "mean": float(v.mean()),
+                "median": float(np.median(v)),
+                "std": float(v.std(ddof=1)) if len(v) > 1 else 0.0,
+                "frac_above_1_5": float((v > 1.5).mean()),
+                "frac_below_1_1": float((v < 1.1).mean())}
+
     res = {"checkpoint": str(a.checkpoint),
            "arm": "temporal" if temporal else "frame",
-           "split": a.split, "n_frames": int(len(arr)),
-           "n_overlays": made,
-           "attention_ratio_mean": float(arr.mean()),
-           "attention_ratio_median": float(np.median(arr)),
-           "attention_ratio_std": float(arr.std(ddof=1)) if len(arr) > 1 else 0.0,
-           "frac_above_1_5": float((arr > 1.5).mean()),
-           "frac_below_1_1": float((arr < 1.1).mean())}
-    log_.info("anatomical attention ratio: mean %.2f  median %.2f  "
-              "%.0f%% above 1.5", arr.mean(), np.median(arr),
-              100 * (arr > 1.5).mean())
-    if arr.mean() < 1.3:
+           "split": a.split, "mask_source": a.on, "n_overlays": made,
+           "unet": a.unet,
+           "ground_truth_masks": summarise(df.get("gt", pd.Series(dtype=float))),
+           "predicted_masks": summarise(df.get("pred", pd.Series(dtype=float)))}
+
+    # Predicted masks are not ground truth. Where a frame has both, compare
+    # them, so the predicted-mask numbers on negatives are read with a measured
+    # idea of how far they can drift rather than on trust.
+    both = df.dropna() if {"gt", "pred"} <= set(df.columns) else df.iloc[:0]
+    if len(both) > 2:
+        res["gt_vs_pred"] = {
+            "n": int(len(both)),
+            # both["gt"], not both.gt -- DataFrame.gt is the comparison method
+            "mean_abs_diff": float((both["gt"] - both["pred"]).abs().mean()),
+            "pearson_r": float(np.corrcoef(both["gt"], both["pred"])[0, 1])}
+        log_.info("predicted vs ground-truth masks on %d frames that have "
+                  "both: r = %.3f, mean |difference| %.3f", len(both),
+                  res["gt_vs_pred"]["pearson_r"],
+                  res["gt_vs_pred"]["mean_abs_diff"])
+
+    # per class, which is the point of --on all
+    key = "pred" if a.on == "all" else "gt"
+    if "label" in df.columns and df.label.nunique() > 1:
+        res["by_class"] = {
+            ("standard" if lab == 1 else "non_standard"):
+                summarise(g[key].values)
+            for lab, g in df.groupby("label")}
+        for name, v in res["by_class"].items():
+            log_.info("  %-12s attention %.2f (median %.2f, n=%d)",
+                      name, v["mean"], v["median"], v["n"])
+
+    head = res["ground_truth_masks"] or res["predicted_masks"]
+    # keep the original flat keys so existing readers of attention.json
+    # (docs tables, the write-up) do not silently lose their numbers
+    res.update({"n_frames": head.get("n", 0),
+                "attention_ratio_mean": head.get("mean"),
+                "attention_ratio_median": head.get("median"),
+                "attention_ratio_std": head.get("std"),
+                "frac_above_1_5": head.get("frac_above_1_5"),
+                "frac_below_1_1": head.get("frac_below_1_1")})
+    log_.info("anatomical attention ratio (%s masks): mean %.2f  median %.2f  "
+              "%.0f%% above 1.5", "ground-truth" if key == "gt" else "predicted",
+              head["mean"], head["median"], 100 * head["frac_above_1_5"])
+    if head["mean"] < 1.3:
         log_.warning("Attention is barely above chance. Before reporting ANY "
                      "accuracy number, check for centre/scanner shortcuts: "
                      "train on two hospitals and test on the third, and crop "
