@@ -34,6 +34,10 @@ async function init() {
     setStatus("Loading model metadata…");
     state.meta = await (await fetch("model/model_meta.json")).json();
     renderModelLine(state.meta);
+    // Start this now rather than after the 44.7 MB classifier has downloaded:
+    // it is a few kB, it is independent, and it is what tells the visitor that
+    // a second stage exists and what it would cost them.
+    loadSegMeta();
 
     if (window.ort) {
       ort.env.wasm.wasmPaths =
@@ -49,7 +53,6 @@ async function init() {
       graphOptimizationLevel: "all",
     });
     setStatus("Model ready.");
-    loadSegMeta();
   } catch (err) {
     console.error(err);
     setStatus(`Could not load the model: ${err.message}`, true);
