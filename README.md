@@ -242,7 +242,10 @@ at r ≈ 0.93 against real masks on the frames that have both.
 The frame models read anatomy on both classes; the temporal models largely do
 not. The best-scoring temporal model attends to the anatomy least — a second,
 independent reason to doubt that its advantage reflects better frame
-understanding.
+understanding. Two counts worth reading alongside: the segmenter drew anatomy
+on **every** frame including all 120 non-standard ones, and the temporal models
+produce no positive evidence anywhere on about a quarter of negatives against
+2–5% for the frame models.
 
 Scored as a classifier by how much anatomy it finds, the segmenter reaches
 **0.530 ± 0.039 macro-F1** across the eleven arms, below the dense frame

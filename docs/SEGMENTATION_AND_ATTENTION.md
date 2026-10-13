@@ -249,14 +249,15 @@ to quote where it exists.
 
 ### 4.2 Attention on both classes
 
-~235 frames per model, balanced across classes, predicted masks throughout:
+240 frames per model, 120 of each class, predicted masks throughout. `n` is
+how many produced a usable ratio; the rest are counted, not dropped (§4.3).
 
-| model | test macro-F1 | standard | non-standard | all |
-|---|---:|---:|---:|---:|
-| ResNet-18 `dense_all` | 0.579 | **1.96** | 1.47 | 1.72 |
-| ResNet-18 `sparse_k1` | 0.687 | **1.88** | 1.51 | 1.70 |
-| CNN-BiLSTM, no splice | 0.650 | 1.20 | 1.45 | 1.31 |
-| CNN-BiLSTM, spliced | **0.670** | **1.12** | **1.04** | 1.08 |
+| model | macro-F1 | standard (n) | non-standard (n) |
+|---|---:|---:|---:|
+| ResNet-18 `dense_all` | 0.579 | **1.96** (120) | 1.47 (118) |
+| ResNet-18 `sparse_k1` | 0.687 | **1.88** (120) | 1.51 (114) |
+| CNN-BiLSTM, no splice | 0.650 | 1.20 (113) | 1.45 (89) |
+| CNN-BiLSTM, spliced | **0.670** | **1.12** (120) | **1.04** (93) |
 
 **The headline finding survives, and is now stronger.** The frame-wise models
 read anatomy; the temporal models largely do not. The best-scoring temporal
@@ -272,12 +273,38 @@ find and the predicted mask is less trustworthy, but the evidence the model
 uses still concentrates where the anatomy is. The spliced CNN-BiLSTM sits at
 1.12 and 1.04 — indistinguishable from no anatomical preference on either class.
 
-One number deserves scepticism rather than a story: the unspliced CNN-BiLSTM's
-non-standard mean of 1.45 is above its standard mean of 1.20, but the medians
-run the other way (1.17 against 1.29). With 89 frames and a long right tail,
-that mean is a few outliers, not a finding.
+**The segmenter drew anatomy on every single frame.** Across all 240 frames of
+all four runs, zero had an empty predicted mask — including all 120
+non-standard ones. That is §3's over-calling, measured directly rather than
+inferred from a confusion matrix.
 
-### 4.3 What this still does not show
+### 4.3 The frames with no evidence at all
+
+A Grad-CAM map is ReLU'd, so a model with no positive evidence for "standard
+plane" anywhere in a frame produces an all-zero map and no ratio. How often
+that happens is itself a result:
+
+| model | empty maps, standard | empty maps, non-standard |
+|---|---:|---:|
+| ResNet-18 `dense_all` | 0 / 120 | 2 / 120 |
+| ResNet-18 `sparse_k1` | 0 / 120 | 6 / 120 |
+| CNN-BiLSTM, no splice | 7 / 120 | **31 / 120** |
+| CNN-BiLSTM, spliced | 0 / 120 | **27 / 120** |
+
+The temporal models have no positive evidence anywhere on about a quarter of
+non-standard frames; the frame models almost never do. That is not a defect —
+having no evidence for "standard plane" on a non-standard frame is correct
+behaviour — but it does mean the non-standard means above are computed over the
+frames where the model *did* find something, i.e. with the most confidently
+negative frames removed.
+
+That selection effect is the right way to read the one number in §4.2 that
+otherwise looks like a story: the unspliced CNN-BiLSTM's non-standard mean of
+1.45 sits above its standard mean of 1.20, but its median runs the other way
+(1.17 against 1.29) and it is computed over just 89 of 120 frames. It is a long
+right tail on a thinned sample, not a finding.
+
+### 4.4 What this still does not show
 
 On negatives, the "anatomy" being measured against is a prediction from a
 segmenter that has never seen a negative and over-calls them (§3). So the
