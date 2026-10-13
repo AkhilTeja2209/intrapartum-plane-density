@@ -312,10 +312,20 @@ def main() -> int:
 
     df = pd.DataFrame(ratios)
 
-    def summarise(v: np.ndarray) -> dict:
-        v = np.asarray([x for x in v if np.isfinite(x)], dtype=float)
+    def summarise(v) -> dict:
+        """Always the same shape, so callers never have to test for presence.
+
+        A frame contributes NaN when its Grad-CAM map is entirely zero -- the
+        map is ReLU'd, so an untrained or indifferent model can produce one --
+        and a whole class can come back empty that way. Returning {} for that
+        case made every reader of this dict a crash waiting for the right
+        input, which is how it reached CI.
+        """
+        v = np.asarray([x for x in np.asarray(v, dtype=float)
+                        if np.isfinite(x)], dtype=float)
         if not len(v):
-            return {}
+            return {"n": 0, "mean": None, "median": None, "std": None,
+                    "frac_above_1_5": None, "frac_below_1_1": None}
         return {"n": int(len(v)), "mean": float(v.mean()),
                 "median": float(np.median(v)),
                 "std": float(v.std(ddof=1)) if len(v) > 1 else 0.0,
@@ -352,10 +362,15 @@ def main() -> int:
                 summarise(g[key].values)
             for lab, g in df.groupby("label")}
         for name, v in res["by_class"].items():
-            log_.info("  %-12s attention %.2f (median %.2f, n=%d)",
-                      name, v["mean"], v["median"], v["n"])
+            if v["n"]:
+                log_.info("  %-12s attention %.2f (median %.2f, n=%d)",
+                          name, v["mean"], v["median"], v["n"])
+            else:
+                log_.warning("  %-12s no frame produced a usable Grad-CAM map",
+                             name)
 
-    head = res["ground_truth_masks"] or res["predicted_masks"]
+    head = (res["ground_truth_masks"] if res["ground_truth_masks"]["n"]
+            else res["predicted_masks"])
     # keep the original flat keys so existing readers of attention.json
     # (docs tables, the write-up) do not silently lose their numbers
     res.update({"n_frames": head.get("n", 0),
@@ -364,6 +379,11 @@ def main() -> int:
                 "attention_ratio_std": head.get("std"),
                 "frac_above_1_5": head.get("frac_above_1_5"),
                 "frac_below_1_1": head.get("frac_below_1_1")})
+    if not head["n"]:
+        log_.warning("no frame produced a usable Grad-CAM map; nothing to "
+                     "report. Check that the checkpoint and the frames match.")
+        save_json(res, out / "attention.json")
+        return 0
     log_.info("anatomical attention ratio (%s masks): mean %.2f  median %.2f  "
               "%.0f%% above 1.5", "ground-truth" if key == "gt" else "predicted",
               head["mean"], head["median"], 100 * head["frac_above_1_5"])
