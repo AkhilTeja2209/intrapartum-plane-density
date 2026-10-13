@@ -416,9 +416,12 @@ conditions:
                 if att.exists():
                     import json as _json
                     j = _json.loads(att.read_text())
-                    _check(set(j.get("by_class", {})) ==
-                           {"standard", "non_standard"},
-                           "attention reported for both classes", failures)
+                    bc = j.get("by_class", {})
+                    _check(set(bc) == {"standard", "non_standard"},
+                           "attention reported for both classes "
+                           + (f"(n={bc.get('standard',{}).get('n')}/"
+                              f"{bc.get('non_standard',{}).get('n')})"
+                              if bc else ""), failures)
                     # The ratio can legitimately be absent: a Grad-CAM map is
                     # ReLU'd, and a model trained for two epochs on noise can
                     # produce an all-zero map for a class. What must hold is

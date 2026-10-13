@@ -287,13 +287,22 @@ def main() -> int:
                            (a.img_size, a.img_size), device)
               if unet is not None else None)
         m = gt if gt is not None else pm
-        if m is None or m.sum() == 0:
-            continue
-        ratios.append({"label": int(r.label),
+        # A frame with no mask, or with an all-zero Grad-CAM, yields no ratio.
+        # Record it anyway rather than dropping it: both are informative, and
+        # silently shrinking the denominator hides a selection effect. An
+        # all-zero map on a non-standard frame in particular is the model
+        # having no positive evidence anywhere, which is reasonable behaviour
+        # and exactly the frame an attention mean would otherwise omit.
+        no_mask = m is None or m.sum() == 0
+        zero_cam = float(cam.sum()) == 0.0
+        ratios.append({"label": int(r.label), "no_mask": bool(no_mask),
+                       "zero_cam": bool(zero_cam),
                        "gt": attention_ratio(cam, gt, seed=a.seed)
-                             if gt is not None else np.nan,
+                             if (gt is not None and not no_mask) else np.nan,
                        "pred": attention_ratio(cam, pm, seed=a.seed)
-                               if pm is not None else np.nan})
+                               if (pm is not None and not no_mask) else np.nan})
+        if no_mask:
+            continue
 
         if made < a.n_overlays:
             grey = np.array(grey_img.resize((a.img_size, a.img_size)))
@@ -354,20 +363,31 @@ def main() -> int:
                   res["gt_vs_pred"]["pearson_r"],
                   res["gt_vs_pred"]["mean_abs_diff"])
 
+    res["frames_scored"] = int(len(df))
+    res["frames_without_mask"] = int(df["no_mask"].sum()) if len(df) else 0
+    res["frames_with_empty_cam"] = int(df["zero_cam"].sum()) if len(df) else 0
+    log_.info("%d frames scored; %d had no mask, %d had an all-zero Grad-CAM",
+              res["frames_scored"], res["frames_without_mask"],
+              res["frames_with_empty_cam"])
+
     # per class, which is the point of --on all
     key = "pred" if a.on == "all" else "gt"
     if "label" in df.columns and df.label.nunique() > 1:
         res["by_class"] = {
             ("standard" if lab == 1 else "non_standard"):
-                summarise(g[key].values)
+                {**summarise(g[key].values), "n_sampled": int(len(g)),
+                 "n_empty_cam": int(g["zero_cam"].sum()),
+                 "n_no_mask": int(g["no_mask"].sum())}
             for lab, g in df.groupby("label")}
         for name, v in res["by_class"].items():
             if v["n"]:
-                log_.info("  %-12s attention %.2f (median %.2f, n=%d)",
-                          name, v["mean"], v["median"], v["n"])
+                log_.info("  %-12s attention %.2f (median %.2f, n=%d of %d "
+                          "sampled; %d empty maps, %d without a mask)",
+                          name, v["mean"], v["median"], v["n"], v["n_sampled"],
+                          v["n_empty_cam"], v["n_no_mask"])
             else:
-                log_.warning("  %-12s no frame produced a usable Grad-CAM map",
-                             name)
+                log_.warning("  %-12s no frame produced a usable Grad-CAM map "
+                             "(%d sampled)", name, v["n_sampled"])
 
     head = (res["ground_truth_masks"] if res["ground_truth_masks"]["n"]
             else res["predicted_masks"])
