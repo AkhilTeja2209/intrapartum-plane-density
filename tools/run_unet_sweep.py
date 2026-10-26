@@ -66,6 +66,25 @@ SWEEP.update({
                      "--batch-size", "4"] + NATIVE,
 })
 
+# Seeds 1 and 2 for every arm whose single-seed result landed inside, or
+# within about 2 sigma of, the base seed spread of +/-0.0034. At n=1 those arms
+# are unresolved rather than null: "ResNet-34 is 0.005 worse" and "ResNet-34 is
+# the same" are the same measurement when one seed is worth 0.003. The three
+# arms that already cleared the spread by 2.7 sigma or more -- native384,
+# ce_only, scratch -- do not need this to support their sign, but native384 is
+# the shipped checkpoint, so it gets seeds too in order to quote a spread for
+# the model that actually ships.
+#
+# native512 is deliberately not in this list. It costs 4.7 h per seed against
+# 15 min for native384, and its single-seed result sat 0.4 sigma from base, so
+# two more seeds would buy the least interesting answer in the sweep at
+# two-thirds of the total compute. Add it explicitly if you want it.
+for _arm in ("noaug", "resnet34", "native256", "native384", "size384"):
+    for _seed in (1, 2):
+        _flags = list(SWEEP[f"{_arm}_s0"])
+        _flags[_flags.index("--seed") + 1] = str(_seed)
+        SWEEP[f"{_arm}_s{_seed}"] = _flags
+
 COMMON = ["--epochs", "40", "--patience", "8"]
 
 

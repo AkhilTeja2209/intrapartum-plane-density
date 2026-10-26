@@ -23,7 +23,11 @@ This is the single most likely way this project produces a high number that
 means nothing. Three hospitals and several scanner models are represented, and
 if standard planes are not uniformly distributed across centres, a model can
 score well by learning "this is the scanner from centre 2" and never looking at
-the symphysis.
+the symphysis. The per-centre split that would test this directly is not
+available -- the release carries no centre label and every video is re-encoded
+to an identical container -- but the splits are separated by acquisition date
+instead, so `tools/per_campaign.py` tests the same shortcut across the 2021 and
+2024 test campaigns.
 
 Both arms are supported. The temporal arm needs more care than the frame arm:
 its encoder sees a clip flattened to (B*T, 3, H, W), so the activations and
@@ -409,9 +413,12 @@ def main() -> int:
               head["mean"], head["median"], 100 * head["frac_above_1_5"])
     if head["mean"] < 1.3:
         log_.warning("Attention is barely above chance. Before reporting ANY "
-                     "accuracy number, check for centre/scanner shortcuts: "
-                     "train on two hospitals and test on the third, and crop "
-                     "the UI overlay region.")
+                     "accuracy number, check for acquisition shortcuts: score "
+                     "the 2021 and 2024 test campaigns separately "
+                     "(tools/per_campaign.py) and crop the UI overlay region. "
+                     "A per-hospital split is not possible -- IUGC2024 ships "
+                     "no centre label and the videos are uniformly "
+                     "re-encoded.")
     save_json(res, out / "attention.json")
     log_.info("wrote %d overlays and attention.json to %s", made, out)
     return 0
