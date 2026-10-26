@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -54,13 +55,47 @@ def campaign_of(video_id: str) -> str | None:
     return None
 
 
+def exam_ids(video_ids) -> dict[str, str]:
+    """Group clips that came from the same examination.
+
+    Resampling videos independently overstates precision, because several
+    clips of one examination share a patient, a session, an operator and a
+    machine. The 2021 campaign says so in its filenames -- a 20-digit
+    examination stamp then I1..I6 -- so its 93 clips are 33 examinations. The
+    2024 campaign names clips by timestamp alone, and consecutive clips are a
+    median of 1.3 minutes apart, so they are grouped by a 10-minute gap: 207
+    clips become 84 sessions. That rule is a heuristic, unlike the 2021
+    prefix, but any grouping is closer to the truth than treating all 207 as
+    independent.
+    """
+    out: dict[str, str] = {}
+    stamps = []
+    for v in map(str, video_ids):
+        if campaign_of(v) == "2021":
+            out[v] = re.sub(r"I\d+$", "", v)          # explicit, from the name
+        elif campaign_of(v) == "2024":
+            stamps.append((datetime.strptime(v[:12], "%y%m%d%H%M%S"), v))
+    k, prev = 0, None
+    for t, v in sorted(stamps):
+        if prev is None or (t - prev).total_seconds() / 60 >= 10:
+            k += 1
+        out[v], prev = f"session{k}", t
+    return out
+
+
 def score(df: pd.DataFrame, thr: float, seed: int = 0) -> dict:
     m = frame_metrics(df.label.values, df.prob.values, thr)
     lo, hi = bootstrap_ci(df, df.prob.values, thr, "macro_f1", seed=seed)
     return {"macro_f1": m["macro_f1"], "lo": lo, "hi": hi,
-            "auprc": m.get("auprc"), "recall": m["recall_standard"],
+            # AUROC is the comparable number across campaigns: prevalence is
+            # 0.68 against 0.52, so neither macro-F1 at one frozen threshold
+            # nor AUPRC (whose baseline is the prevalence) can be read across
+            # them directly.
+            "auroc": m.get("auroc"), "auprc": m.get("auprc"),
+            "recall": m["recall_standard"],
             "precision": m["precision_standard"], "n_frames": m["n"],
-            "prevalence": m["prevalence"], "n_videos": int(df.video_id.nunique())}
+            "prevalence": m["prevalence"], "n_videos": int(df.video_id.nunique()),
+            "n_exams": int(df.exam.nunique()) if "exam" in df else None}
 
 
 def main() -> int:
@@ -78,6 +113,7 @@ def main() -> int:
         thr = json.loads(rj.read_text())["results"]["raw"]["threshold"]
         df = pd.read_csv(d)
         df["campaign"] = df.video_id.map(campaign_of)
+        df["exam"] = df.video_id.astype(str).map(exam_ids(df.video_id.unique()))
         unknown = int(df.campaign.isna().sum())
         if unknown:
             log.warning("%s: %d frames with an unrecognised video id", run, unknown)

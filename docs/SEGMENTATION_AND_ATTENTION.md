@@ -339,21 +339,48 @@ be scored separately — which asks what the per-centre split was meant to ask,
 from predictions that already exist. `tools/per_campaign.py` does this.
 
 Read AUROC, not macro-F1: the campaigns have different class balance
-(prevalence 0.68 against 0.52), so a single frozen threshold is not comparable
-across them, while AUROC is prevalence-independent. CIs resample videos.
+(prevalence 0.68 against 0.52), so neither macro-F1 at one frozen threshold nor
+AUPRC — whose baseline *is* the prevalence — can be read across them, while
+AUROC is prevalence-independent.
 
-| arm | overall F1 | AUROC 2021 (n=93) | AUROC 2024 (n=207) | gap [95% CI] |
+Intervals resample **examinations, not clips.** Several clips can come from one
+examination, sharing a patient, a session, an operator and a machine. The 2021
+campaign states this in its filenames (a 20-digit examination stamp then
+`I1`..`I6`), so its 93 clips are 33 examinations; 2024's clips are a median of
+1.3 minutes apart and group into 84 sessions at a 10-minute rule. Resampling
+clips treats correlated units as independent and reports intervals too narrow.
+
+| arm | overall F1 | AUROC 2021 (33 exams) | AUROC 2024 (84 sessions) | gap [95% CI] |
 |---|---:|---:|---:|---:|
-| ResNet-18 `sparse_k1` (shipped) | 0.687 | 0.698 [0.623–0.766] | 0.861 [0.834–0.884] | **+0.164** [+0.089, +0.235] |
-| ResNet-18 `dense_all` | 0.579 | 0.628 [0.553–0.703] | 0.813 [0.782–0.842] | **+0.185** [+0.109, +0.261] |
-| CNN-BiLSTM, spliced (best overall) | 0.670 | **0.576 [0.496–0.658]** | 0.843 [0.812–0.873] | **+0.267** [+0.180, +0.347] |
-| CNN-BiLSTM, no splice | 0.650 | 0.591 [0.501–0.668] | 0.786 [0.756–0.814] | **+0.196** [+0.108, +0.288] |
+| ResNet-18 `sparse_k1` (shipped) | 0.687 | 0.699 [0.615–0.779] | 0.861 [0.835–0.886] | **+0.162** [+0.079, +0.252] |
+| ResNet-18 `dense_all` | 0.579 | 0.630 [0.550–0.708] | 0.813 [0.781–0.843] | **+0.183** [+0.098, +0.267] |
+| CNN-BiLSTM, spliced (best overall) | 0.670 | **0.579 [0.495–0.667]** | 0.844 [0.797–0.885] | **+0.266** [+0.177, +0.357] |
+| CNN-BiLSTM, no splice | 0.650 | 0.592 [0.502–0.673] | 0.787 [0.747–0.829] | **+0.195** [+0.103, +0.294] |
 
 **Performance does not transfer across acquisition campaigns.** All four gaps
-exclude zero by a wide margin, and this is not a thresholding artifact: tuning
-the threshold per campaign — on test, as a diagnostic only — still leaves 2021
-at 0.57–0.65 macro-F1 against 0.72–0.80 on 2024. Ranking degrades, not just
-calibration.
+exclude zero, and this is not a thresholding artifact: tuning the threshold per
+campaign — on test, as a diagnostic only — still leaves 2021 at 0.57–0.65
+macro-F1 against 0.72–0.80 on 2024. Ranking degrades, not just calibration.
+
+**It holds for every arm in the project, without exception.** Scored across all
+25 arms that have saved test predictions — every sampling condition, seed and
+architecture:
+
+| | 2021 | 2024 |
+|---|---:|---:|
+| mean AUROC | 0.632 | 0.810 |
+| range | 0.521 – 0.770 | 0.678 – 0.865 |
+
+The gap is positive in **25 of 25** arms (mean +0.179, median +0.184, range
++0.047 to +0.299), and 9 of the 25 fall below 0.60 AUROC on the 2021 campaign.
+The best 2021 result anywhere in the project is 0.770. A unanimous 25-of-25
+sign is not a property of any one model; it is a property of the shift.
+
+**And it is not simple temporal drift.** Training is 2019, so the 2021 campaign
+is nearer to it in time than 2024 is — yet 2021 is the one that fails, by
+0.18 AUROC on average. Whatever separates these campaigns, it is not elapsed
+time since training, which is what makes "something about the 2021 acquisition
+setup" the more plausible reading.
 
 **The best-scoring arm is the worst offender.** The spliced CNN-BiLSTM leads
 overall at 0.670 and collapses hardest: AUROC 0.576 on the 2021 campaign, with
@@ -396,6 +423,11 @@ consistent with a shortcut, not proof of one.
 The 40 validation videos are also renamed, so their provenance is unknown,
 which compounds the thin-validation problem in §2.3: the threshold and the
 arm are both selected on 40 videos that cannot be placed in either campaign.
+
+Finally, the 2024 session grouping is a 10-minute-gap heuristic, not a stated
+fact like the 2021 examination prefix. If 2024's true sessions are coarser, its
+intervals are still slightly narrow — but its interval is the tight one in
+every row above, so the gaps would widen away from zero, not toward it.
 
 
 ---

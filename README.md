@@ -259,16 +259,22 @@ campaigns differ at 0.68 against 0.52):
 
 | Model | overall F1 | AUROC 2021 | AUROC 2024 | gap [95% CI] |
 |---|---:|---:|---:|---:|
-| ResNet-18 `sparse_k1` | 0.687 | 0.698 | 0.861 | **+0.164** [+0.089, +0.235] |
-| ResNet-18 `dense_all` | 0.579 | 0.628 | 0.813 | **+0.185** [+0.109, +0.261] |
-| CNN-BiLSTM, spliced | 0.670 | **0.576** | 0.843 | **+0.267** [+0.180, +0.347] |
-| CNN-BiLSTM, no splice | 0.650 | 0.591 | 0.786 | **+0.196** [+0.108, +0.288] |
+| ResNet-18 `sparse_k1` | 0.687 | 0.699 | 0.861 | **+0.162** [+0.079, +0.252] |
+| ResNet-18 `dense_all` | 0.579 | 0.630 | 0.813 | **+0.183** [+0.098, +0.267] |
+| CNN-BiLSTM, spliced | 0.670 | **0.579** | 0.844 | **+0.266** [+0.177, +0.357] |
+| CNN-BiLSTM, no splice | 0.650 | 0.592 | 0.787 | **+0.195** [+0.103, +0.294] |
+
+Intervals resample examinations, not clips: the 93 "2021" videos are 33
+examinations and the 207 "2024" ones about 84 sessions.
 
 No arm transfers, and the best-scoring one transfers worst: the spliced
-CNN-BiLSTM's 2021 interval is [0.496, 0.658], which includes 0.5 — chance, on
-93 videos. The overall figures look healthier only because 2024 is 207 of the
-300 test videos. Re-tuning the threshold per campaign does not rescue it, so
-this is degraded ranking rather than miscalibration.
+CNN-BiLSTM's 2021 interval is [0.495, 0.667], which includes 0.5 — chance, on
+33 examinations. It holds across **every** arm in the project: the gap is
+positive in 25 of 25, mean AUROC 0.632 on 2021 against 0.810 on 2024. The
+overall figures look healthier only because 2024 is 207 of the 300 test videos.
+Re-tuning the threshold per campaign does not rescue it, so this is degraded
+ranking rather than miscalibration. Nor is it temporal drift — training is
+2019, so 2021 is the *nearer* campaign and still the one that fails.
 
 A per-centre split would be the direct test and **is not possible**: the
 release carries no centre label and every video is uniformly re-encoded. Details
