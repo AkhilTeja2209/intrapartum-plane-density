@@ -63,6 +63,12 @@ ENSEMBLES = {
     "ens_seeds": ["base_s0", "base_s1", "base_s2"],
     "ens_native_sizes": ["native256_s0", "native384_s0", "native512_s0"],
     "ens_best_mixed": ["base_s0", "native512_s0", "resnet34_s0"],
+    # Once native384 has three seeds, the obvious ensemble is the shipped
+    # configuration averaged over its own seeds: it isolates the gain from
+    # averaging away seed noise, with the input size held fixed, which
+    # ens_native_sizes confounds with resolution.
+    "ens_native384_seeds": ["native384_s0", "native384_s1", "native384_s2"],
+    "ens_native256_seeds": ["native256_s0", "native256_s1", "native256_s2"],
 }
 
 
