@@ -117,6 +117,9 @@ python tools/unet_compare.py --classify
 # attention: Grad-CAM on both classes, using the segmenter's predicted masks
 python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt     --unet results/unet/base_s0/best.pt --on all
 
+# cross-campaign transfer: score the 2021 and 2024 test campaigns separately
+python -m tools.per_campaign
+
 # temporal arm instead of frame-wise
 python -m src.run_experiment --condition dense_all --model temporal --seed 0
 
@@ -246,6 +249,30 @@ understanding. Two counts worth reading alongside: the segmenter drew anatomy
 on **every** frame including all 120 non-standard ones, and the temporal models
 produce no positive evidence anywhere on about a quarter of negatives against
 2–5% for the frame models.
+
+### Nothing transfers between the two acquisition campaigns
+
+The test set holds two campaigns three years apart — 93 videos from Dec 2020 –
+Jul 2021 and 207 from Apr–Jul 2024 — and training is entirely a third campaign
+from 2019. Scored separately (AUROC, which is prevalence-independent; the
+campaigns differ at 0.68 against 0.52):
+
+| Model | overall F1 | AUROC 2021 | AUROC 2024 | gap [95% CI] |
+|---|---:|---:|---:|---:|
+| ResNet-18 `sparse_k1` | 0.687 | 0.698 | 0.861 | **+0.164** [+0.089, +0.235] |
+| ResNet-18 `dense_all` | 0.579 | 0.628 | 0.813 | **+0.185** [+0.109, +0.261] |
+| CNN-BiLSTM, spliced | 0.670 | **0.576** | 0.843 | **+0.267** [+0.180, +0.347] |
+| CNN-BiLSTM, no splice | 0.650 | 0.591 | 0.786 | **+0.196** [+0.108, +0.288] |
+
+No arm transfers, and the best-scoring one transfers worst: the spliced
+CNN-BiLSTM's 2021 interval is [0.496, 0.658], which includes 0.5 — chance, on
+93 videos. The overall figures look healthier only because 2024 is 207 of the
+300 test videos. Re-tuning the threshold per campaign does not rescue it, so
+this is degraded ranking rather than miscalibration.
+
+A per-centre split would be the direct test and **is not possible**: the
+release carries no centre label and every video is uniformly re-encoded. Details
+and limits in [docs/SEGMENTATION_AND_ATTENTION.md](docs/SEGMENTATION_AND_ATTENTION.md) §4.4.
 
 Scored as a classifier by how much anatomy it finds, the segmenter reaches
 **0.530 ± 0.039 macro-F1** across the eleven arms, below the dense frame

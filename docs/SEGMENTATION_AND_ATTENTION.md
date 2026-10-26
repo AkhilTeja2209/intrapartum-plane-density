@@ -6,7 +6,12 @@ whether the classifiers were ever looking there.
 
 The first version of this page reported one U-Net, at one seed, scored at its
 own input resolution. Eleven arms later, two of its three headline numbers have
-moved and one of its conclusions is withdrawn. §5 says which.
+moved and one of its conclusions is withdrawn. §6 says which.
+
+The attention check also turned out to have a second instrument. The test set
+contains two acquisition campaigns three years apart, and no model transfers
+between them — the best-scoring one least of all, at chance level on the older
+campaign (§4.4).
 
 ---
 
@@ -263,7 +268,7 @@ how many produced a usable ratio; the rest are counted, not dropped (§4.3).
 read anatomy; the temporal models largely do not. The best-scoring temporal
 model attends to the anatomy least, on *both* classes, and splicing made
 attention worse rather than better — a second line of evidence, independent of
-the unspliced ablation in `RESULTS.md` §3, that the temporal arm's advantage is
+the unspliced ablation in the README's Results section, that its advantage is
 not better frame understanding.
 
 What is new is the per-class split. The frame models drop from ~1.9 on standard
@@ -304,7 +309,74 @@ otherwise looks like a story: the unspliced CNN-BiLSTM's non-standard mean of
 (1.17 against 1.29) and it is computed over just 89 of 120 frames. It is a long
 right tail on a thinned sample, not a finding.
 
-### 4.4 What this still does not show
+### 4.4 The same question asked with a different instrument: it does not transfer
+
+Grad-CAM asks whether the model looks at the anatomy. The other way to ask is
+whether it survives a change of acquisition conditions. Earlier versions of
+this page promised a leave-one-centre-out split for that and said it "still has
+not been run", which implied pending work.
+
+**It cannot be run.** IUGC2024 ships no centre or hospital column — not in
+`index.csv`, not in the dataset's own `*_info.csv` files, not in its README —
+and all 774 videos are re-encoded to an identical 512×512, 24 fps, single-codec
+container, so no device signature survives in the metadata either. The entire
+training set is one campaign, so there is nothing to hold out.
+
+What the release does carry is acquisition date, in the filenames, and it
+separates the official splits completely:
+
+| split | n | filename convention | dates |
+|---|---:|---|---|
+| train | 434 | `20190726T095643_0` | Jul 2019 – Jan 2020 |
+| test | 93 | `202012132137152159400I1` | Dec 2020 – Jul 2021 |
+| test | 207 | `240422145736` | Apr 2024 – Jul 2024 |
+| val | 40 | `test_10_80` (renamed) | unknown |
+
+Two things follow. Every number in this project is already measured under a
+1.5-to-4.5-year acquisition shift, because the project uses these splits
+unchanged. And the test set holds two campaigns three years apart, so they can
+be scored separately — which asks what the per-centre split was meant to ask,
+from predictions that already exist. `tools/per_campaign.py` does this.
+
+Read AUROC, not macro-F1: the campaigns have different class balance
+(prevalence 0.68 against 0.52), so a single frozen threshold is not comparable
+across them, while AUROC is prevalence-independent. CIs resample videos.
+
+| arm | overall F1 | AUROC 2021 (n=93) | AUROC 2024 (n=207) | gap [95% CI] |
+|---|---:|---:|---:|---:|
+| ResNet-18 `sparse_k1` (shipped) | 0.687 | 0.698 [0.623–0.766] | 0.861 [0.834–0.884] | **+0.164** [+0.089, +0.235] |
+| ResNet-18 `dense_all` | 0.579 | 0.628 [0.553–0.703] | 0.813 [0.782–0.842] | **+0.185** [+0.109, +0.261] |
+| CNN-BiLSTM, spliced (best overall) | 0.670 | **0.576 [0.496–0.658]** | 0.843 [0.812–0.873] | **+0.267** [+0.180, +0.347] |
+| CNN-BiLSTM, no splice | 0.650 | 0.591 [0.501–0.668] | 0.786 [0.756–0.814] | **+0.196** [+0.108, +0.288] |
+
+**Performance does not transfer across acquisition campaigns.** All four gaps
+exclude zero by a wide margin, and this is not a thresholding artifact: tuning
+the threshold per campaign — on test, as a diagnostic only — still leaves 2021
+at 0.57–0.65 macro-F1 against 0.72–0.80 on 2024. Ranking degrades, not just
+calibration.
+
+**The best-scoring arm is the worst offender.** The spliced CNN-BiLSTM leads
+overall at 0.670 and collapses hardest: AUROC 0.576 on the 2021 campaign, with
+an interval of [0.496, 0.658] that **includes 0.5**. On those 93 videos it is
+statistically indistinguishable from a coin flip.
+
+That converges with §4.2 from the opposite direction. The spliced model showed
+the least anatomical attention (1.12/1.04, no measurable preference) *and* now
+shows the worst cross-campaign transfer. Two independent instruments, one
+conclusion: its advantage is not better frame understanding. This is the third
+line of evidence, after the unspliced ablation in the README's Results section
+and the attention gap.
+
+Why the headline numbers looked healthy: 2024 is 207 of the 300 test videos, so
+they are dominated by the campaign every model handles well. The 2021 third is
+0.16–0.27 AUROC harder for every arm.
+
+Calibration transfers even worse than ranking. On 2021 the macro-F1-optimal
+threshold sits at 0.87–0.99 against the 0.16 frozen on validation, and at the
+frozen threshold recall runs 0.92–0.99 at ~0.70 precision — the models call
+very nearly every 2021 frame a standard plane.
+
+### 4.5 What this still does not show
 
 On negatives, the "anatomy" being measured against is a prediction from a
 segmenter that has never seen a negative and over-calls them (§3). So the
@@ -313,9 +385,17 @@ thinks anatomy is", which is weaker than what the standard column answers. The
 r ≈ 0.93 validation covers positives only, because that is where ground truth
 exists.
 
-And the leave-one-centre-out split — train on two hospitals, test on the third,
-which is what would separate "attends to anatomy" from "attends to this
-hospital's scanner" — **still has not been run.**
+The per-campaign result establishes that performance does not transfer; it does
+not isolate the scanner as the cause. The campaigns are three years apart and
+may differ in patient population, operator and protocol as well as equipment,
+and a per-centre split that would separate those is not available at all. What
+raises the shortcut reading above speculation is the correlation with §4.2:
+the arm with the least anatomical grounding degrades the most. That is
+consistent with a shortcut, not proof of one.
+
+The 40 validation videos are also renamed, so their provenance is unknown,
+which compounds the thin-validation problem in §2.3: the threshold and the
+arm are both selected on 40 videos that cannot be placed in either campaign.
 
 
 ---
@@ -389,6 +469,8 @@ and print the comparison to the console.
 | Best setup | the only setup tried | native-resolution input at 384px, ensembled over input sizes |
 | U-Net as a classifier | "matches the dense frame classifier (0.607 vs 0.610)" | **withdrawn** — see §3 |
 | Attention measured on | standard planes only | both classes, via predicted masks |
+| Leave-one-centre-out split | "still has not been run" | **not runnable** — no centre label exists and the videos are uniformly re-encoded; replaced by a per-campaign split (§4.4) |
+| Cross-campaign transfer | not measured | **no model transfers**; the best-scoring arm is at chance on the 2021 campaign (§4.4) |
 
 ---
 
