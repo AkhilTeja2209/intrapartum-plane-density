@@ -1,0 +1,57 @@
+name: Paper
+
+# The paper cites numbers that live in this repository, so a build that breaks
+# should be as visible as a test that breaks. There is no TeX distribution on
+# the development machine, so CI is the only place the LaTeX is actually
+# compiled -- treat a red run here as "the paper does not build", not as
+# infrastructure noise.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "paper/**"
+      - "docs/demo.png"
+      - ".github/workflows/paper.yml"
+  pull_request:
+    paths:
+      - "paper/**"
+      - "docs/demo.png"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # texlive-publishers carries IEEEtran.cls; the recommended/extra sets
+      # carry booktabs, hyperref and the rest of the preamble.
+      - name: Install TeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-recommended \
+            texlive-latex-extra texlive-publishers texlive-fonts-recommended
+
+      # Twice, so cross-references and table numbers resolve. -halt-on-error
+      # turns a LaTeX error into a failed job instead of an interactive prompt.
+      - name: Build
+        working-directory: paper
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error main.tex
+          pdflatex -interaction=nonstopmode -halt-on-error main.tex
+
+      # Undefined references and overfull boxes do not fail the build, so
+      # surface them rather than letting them pass unseen.
+      - name: Report warnings
+        working-directory: paper
+        run: |
+          echo "--- undefined references / citations ---"
+          grep -n "undefined" main.log || echo "none"
+          echo "--- overfull boxes ---"
+          grep -c "Overfull" main.log || echo "0"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper-pdf
+          path: paper/main.pdf

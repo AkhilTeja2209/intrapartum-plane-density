@@ -40,3 +40,12 @@ desktop.ini
 .idea/
 .claude/
 tools/__pycache__/
+
+# ---- LaTeX build artifacts --------------------------------------------
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.pdf
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz

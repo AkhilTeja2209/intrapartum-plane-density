@@ -384,7 +384,8 @@ this page promised a leave-one-centre-out split for that and said it "still has
 not been run", which implied pending work.
 
 **It cannot be run.** IUGC2024 ships no centre or hospital column — not in
-`index.csv`, not in the dataset's own `*_info.csv` files, not in its README —
+`data/index.csv`, not in the dataset's own `*_info.csv` files, not in its
+README —
 and all 774 videos are re-encoded to an identical 512×512, 24 fps, single-codec
 container, so no device signature survives in the metadata either. The entire
 training set is one campaign, so there is nothing to hold out.

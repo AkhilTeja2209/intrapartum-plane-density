@@ -20,6 +20,14 @@ prior-matched arms to separate density from sample count.
 U-Net then outlines the pubic symphysis and fetal head. Both run in your
 browser. Research demo, not a medical device.
 
+[![The demo running both stages on a held-out frame](docs/demo.png)](https://akhilteja2209.github.io/intrapartum-plane-density/)
+
+*Both stages on a held-out standard plane. Stage one scores it 0.646 and shows
+the Grad-CAM evidence over its 224×224 crop; stage two outlines the symphysis
+and head on the whole frame and reports each as a fraction of it. Every number
+on the page is checked against a PyTorch reference in the browser — the
+classifier agrees to 5e-07 and the segmenter to 1e-07.*
+
 ---
 
 ## Installation
@@ -303,6 +311,11 @@ ordering of frames. The demo labels its area-derived verdict accordingly.
 Full write-up, including why the browser's resampling had to be rewritten in
 fixed-point arithmetic:
 **[`docs/SEGMENTATION_AND_ATTENTION.md`](docs/SEGMENTATION_AND_ATTENTION.md)**.
+
+The whole study, including the results that did not survive replication, is
+written up in IEEE conference format in **[`paper/main.tex`](paper/main.tex)**
+([how to build](paper/README.md)). CI compiles it on every change and uploads
+the PDF as a build artifact.
 
 ---
 
