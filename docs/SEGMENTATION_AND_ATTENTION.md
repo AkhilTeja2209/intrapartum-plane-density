@@ -5,7 +5,7 @@ segmentation model says *where* the anatomy is; the attention check asks
 whether the classifiers were ever looking there.
 
 The first version of this page reported one U-Net, at one seed, scored at its
-own input resolution. Eleven arms later, two of its three headline numbers have
+own input resolution. Twenty-one arms later, three of its headline numbers have
 moved and one of its conclusions is withdrawn. §6 says which.
 
 The attention check also turned out to have a second instrument. The test set
@@ -76,14 +76,20 @@ to 512, Dice against the untouched 512 mask. Every number below is that.
 Re-scoring the original run this way moves it from 0.8699 to **0.8661**. The
 earlier figure was optimistic by 0.004, entirely through the evaluation grid.
 
-### 2.2 Eleven arms
+### 2.2 Twenty-one arms
 
 | arm | input | params | val Dice | test PS | test FH | **test mean** |
 |---|---|---:|---:|---:|---:|---:|
+| `ens_native384_seeds` | 3× ensemble | 43.0M | 0.8775 | 0.8620 | 0.9206 | **0.8913** |
+| `native384_s1` *(shipped)* | 384px native | 14.3M | **0.8788** | 0.8626 | 0.9168 | **0.8897** |
 | `ens_native_sizes` | 3× ensemble | 43.0M | 0.8741 | 0.8531 | 0.9188 | **0.8859** |
-| `ens_best_mixed` | 3× ensemble | 53.1M | 0.8751 | 0.8404 | 0.9167 | **0.8785** |
-| `ens_seeds` | 3× ensemble | 43.0M | 0.8730 | 0.8342 | 0.9147 | **0.8745** |
 | `native384_s0` | 384px native | 14.3M | 0.8686 | 0.8522 | 0.9119 | **0.8821** |
+| `ens_best_mixed` | 3× ensemble | 53.1M | 0.8751 | 0.8404 | 0.9167 | **0.8785** |
+| `ens_native256_seeds` | 3× ensemble | 43.0M | 0.8738 | 0.8361 | 0.9181 | **0.8771** |
+| `ens_seeds` | 3× ensemble | 43.0M | 0.8730 | 0.8342 | 0.9147 | **0.8745** |
+| `size384_s2` *(worst 384)* | 384px cached | 14.3M | 0.8715 | 0.7783 | 0.8940 | **0.8361** |
+
+Full table in `results/unet/comparison.md`.
 | `native256_s0` | 256px native | 14.3M | 0.8722 | 0.8331 | 0.9132 | **0.8731** |
 | `base_s2` | 256px cached | 14.3M | 0.8675 | 0.8242 | 0.9160 | **0.8701** |
 | `size384_s0` | 384px cached | 14.3M | 0.8710 | 0.8274 | 0.9078 | **0.8676** |
@@ -98,30 +104,57 @@ earlier figure was optimistic by 0.004, entirely through the evaluation grid.
 **The bar is the seed spread: 0.8665 ± 0.0034** over `base_s0/1/2`, which
 differ only in the random seed. Anything inside ±0.007 of 0.8665 is noise.
 
-What clears it:
+#### Five arms re-run at three seeds
 
-* **Native-resolution input, +0.0156 at 384px** — 4.6 seed-sigma, the largest
-  single-model effect in the table, and the only architectural-sounding one
-  that is really about the data. `native256_s0` gains +0.0066 on input source
-  alone, at identical input size: re-decoding and resizing once beats resizing
-  at decode time and again at load time, through a JPEG.
-* **Ensembling, +0.008 to +0.019.** Averaging three seeds gives 0.8745;
-  averaging the three native-resolution arms gives **0.8859**, the best result
-  here and within 0.007 of the bottom of the published range.
+The first pass ran one seed per arm and read the differences against the base
+spread of ±0.0034. That was not enough: at n=1 an arm 0.005 from base is
+unresolved, not null. Every arm within ~2σ was re-run at seeds 1 and 2
+(`native512` excepted — 4.7 h per seed to pin down the arm sitting 0.4σ from
+base was two-thirds of the sweep's compute for its least useful answer):
 
-What does not clear it, and what actively hurts:
+| arm | n | mean | sd | vs base | t | verdict |
+|---|---:|---:|---:|---:|---:|---|
+| `native384` | 3 | 0.8828 | 0.0066 | **+0.0163** | **+3.79** | **resolved** |
+| `native256` | 3 | 0.8695 | 0.0040 | +0.0030 | +0.97 | unresolved |
+| `resnet34` | 3 | 0.8673 | 0.0052 | +0.0008 | +0.22 | unresolved |
+| `noaug` | 3 | 0.8571 | 0.0106 | −0.0094 | −1.46 | unresolved |
+| `size384` cached | 3 | 0.8567 | 0.0178 | −0.0098 | −0.94 | unresolved |
 
-* **More resolution is not monotonic.** 384px native beats 256px native by
-  0.009, and 512px native is *worse than both* at 0.8652 — below the native
-  256 arm it should dominate. With 2,575 masks, the extra capacity of a
-  512-pixel field costs more than the detail buys.
-* **ResNet-34 loses 0.005** against ResNet-18 on the same data. More encoder is
-  the wrong direction at this sample size.
-* **Augmentation is worth about 0.006** — real but small, and roughly the size
-  of the seed spread.
+**Two single-seed results did not survive, one of them in sign.** ResNet-34 read
+as −0.0052 at one seed and is **+0.0008** at three: the sign flipped and the
+effect is nil. More encoder is not the wrong direction at this sample size, as
+the first version claimed — it is no direction at all. `native256` halved, from
++0.0066 to +0.0030, so native decoding is not itself the win.
+
+What clears the spread:
+
+* **Native-resolution input at 384px, +0.0163 (t = +3.79).** The only effect in
+  the sweep that resolves, and it is about the data rather than the model.
 * **Dropping the Dice term costs 0.012** and **training from scratch costs
-  0.009.** Both are outside the spread, so the two least fashionable choices in
-  the recipe are the two that are actually carrying it.
+  0.009** — both single-seed, both outside the spread, so the two least
+  fashionable choices in the recipe are the two carrying it.
+* **Ensembling.** Averaging the shipped configuration over its own three seeds
+  gives **0.8913**, the best number here and within 0.002 of the bottom of the
+  published range. Averaging three *different* resolutions gives 0.8859, so the
+  earlier "resolution diversity" gain was seed-averaging all along.
+
+**The resolution finding is sharper than "384 is better".** Native 384px gains
++0.0163 with sd 0.0066. *Cached* 384px — the same input size, interpolated up
+from the 256px cache — loses 0.0098 with sd **0.0178, five times the base
+spread**, and its worst seed scored 0.8361, second-worst in the whole table. So
+384 native helps; 384 interpolated hurts *and* destabilises training. Asking a
+model for a resolution the pixels do not contain is worse than not asking.
+
+Augmentation behaves the same way, and it is the more useful reading of it: the
+mean moves −0.0094 at t = −1.46, which does not resolve, but the spread
+**triples** (0.0106 against 0.0044). On this corpus augmentation buys stability,
+not expected Dice.
+
+What still does not clear it:
+
+* **More resolution is not monotonic.** 384px native beats 256px native, and
+  512px native is *worse than both* at 0.8652 — below the arm it should
+  dominate, though at one seed that gap is itself unresolved.
 * **Test-time augmentation was rejected on validation** (−0.0007) and would
   have gained +0.0021 on test. One more coin-toss-sized effect; §2.3 explains
   why validation could not tell.
@@ -129,19 +162,33 @@ What does not clear it, and what actively hurts:
 The symphysis scores 6–9 points below the head in every arm, as it does in
 every published result: it is ~1.5% of a frame against the head's ~14%.
 
-### 2.3 The validation split cannot pick a winner
+### 2.3 The validation split ranks almost at random — and got lucky anyway
 
-40 masks, from 40 videos. Across the 11 single arms, validation Dice and test
-Dice correlate at **Pearson r = +0.46, Spearman r = +0.27**. The arm that wins
-on validation is `base_s1`; the arm that wins on test is `native384_s0`; and
-**selecting on validation costs 0.0187 Dice**, which is five times the seed
-spread and larger than every effect in §2.2 except native resolution itself.
+40 masks, from 40 videos. Across the 21 single arms, validation Dice and test
+Dice correlate at **Pearson r = +0.42, Spearman r = +0.28**. At that rank
+correlation, "best on validation" carries almost no information about which arm
+is best on test.
 
-This is not a detail. It means that for this corpus, at this validation size,
-"best on validation" is close to a coin toss — and it is the same thinness that
-makes §3's rule selection flip between seeds. Any future arm here needs a
-bigger selection set before its result means anything; the cheapest fix is to
-hold out training videos rather than rely on the 40 the dataset provides.
+Which makes the rest of this an instructive accident. With the three
+`native384` seeds in the sweep, the arm that wins on validation — `native384_s1`
+at 0.8788, the highest validation Dice of all 21 — is *also* the arm that wins
+on test, at 0.8897. **Selecting on validation now costs 0.0 Dice.**
+
+The earlier version of this page said selection costs 0.0187 Dice, and that was
+true of the 11 arms then in the sweep. Neither number should be read as a
+property of the validation split. A selector with Spearman +0.28 that lands on
+the best of 21 arms has got lucky; one that misses by 0.019 has got unlucky.
+What is stable across both passes is the correlation, and it is poor.
+
+The consequence stands regardless: at this validation size, selection is close
+to a coin toss, and it is the same thinness that makes §3's rule choice flip
+between seeds. Any future arm needs a bigger selection set before its result
+means anything; the cheapest fix is to hold out training videos rather than rely
+on the 40 the dataset provides.
+
+The one thing the coincidence does buy is honesty about the shipped model. The
+browser demo serves `native384_s1`, and it no longer has to be described as
+picked on test — it is what validation would have chosen too.
 
 ### 2.4 Mask encodings differ between splits
 
@@ -207,19 +254,39 @@ Note also that choosing the rule on validation *reduces* the variance
 here is bad at finding the best configuration and good at avoiding the worst —
 which is the opposite of how it is usually sold.
 
-**The best configurations do reach the frame classifier.** `native384_s0`
-reaches 0.603, and the three-way native-resolution ensemble reaches **0.622**,
-both inside `dense_all`'s 0.610 ± 0.032. So "a segmenter trained with no
-negatives at all can classify about as well as a frame classifier trained on
-53,996 labelled frames" is still defensible — for the best segmenters, as a
-statement about the top of a wide distribution, which is a much weaker claim
-than the one made before.
+**Even "the best configurations reach the frame classifier" does not survive.**
+An earlier pass of this page kept a weakened version of the original claim:
+`native384_s0` reached 0.603 and the native-resolution ensemble 0.622, both
+inside `dense_all`'s 0.610 ± 0.032, so the comparison was said to hold for the
+best segmenters at least.
 
-The error profile is unchanged and is the real story: `native384_s0` runs at
-**recall 0.976 against specificity 0.290**. It says "standard plane" to almost
-everything, which is exactly what a model that has only ever been shown
-standard planes should do. It is not a plane detector; it is an anatomy
-detector being asked a question it was never supervised for.
+Then the same configuration was run at two more seeds. `native384_s1` — the
+arm that wins on both validation and test Dice, and the one the demo ships —
+scores **0.456**. Same recipe, same data, one seed apart, **0.147 macro-F1
+lower**, and below every base seed:
+
+| arm | rule chosen on val | val macro-F1 | test macro-F1 | specificity |
+|---|---|---:|---:|---:|
+| `base_s0` | geomean | 0.603 | 0.577 | 0.245 |
+| `base_s1` | sum | 0.573 | 0.494 | 0.143 |
+| `base_s2` | geomean | 0.640 | 0.498 | 0.144 |
+| `ens_seeds` | geomean | 0.587 | 0.587 | 0.260 |
+| `native384_s1` *(shipped)* | geomean | 0.565 | **0.456** | 0.099 |
+
+So 0.603 was the lucky seed of its configuration, not a property of it. There
+is no version of "the segmenter classifies as well as the frame classifier"
+that holds — not for the mean, and not for the best configuration either, since
+"best" is only identifiable after the fact. Better segmentation does not even
+buy a better derived classifier: the arm with the highest Dice in the whole
+sweep has the lowest macro-F1 of the five measured.
+
+The error profile is the real story, and it is worse for the better segmenter.
+The shipped arm runs at **recall 0.993 against specificity 0.099** — it calls
+90% of non-standard frames standard. That is exactly what a model shown nothing
+but standard planes should do, and sharpening its anatomy detection makes it
+*more* confident on frames where there is anatomy but no standard plane. It is
+not a plane detector; it is an anatomy detector being asked a question it was
+never supervised for, and the demo now says so on the page.
 
 
 ---
@@ -501,6 +568,11 @@ and print the comparison to the console.
 | Best setup | the only setup tried | native-resolution input at 384px, ensembled over input sizes |
 | U-Net as a classifier | "matches the dense frame classifier (0.607 vs 0.610)" | **withdrawn** — see §3 |
 | Attention measured on | standard planes only | both classes, via predicted masks |
+| Best Dice | 0.8859, ensembling three input sizes | **0.8913**, ensembling the shipped config over its own seeds |
+| Shipped checkpoint | `native384_s0`, 0.8821, picked on test | `native384_s1`, **0.8897**, and validation would have picked it too |
+| ResNet-34 | "loses 0.005; more encoder is the wrong direction" | **withdrawn** — +0.0008 at three seeds, the sign flipped (§2.2) |
+| Validation selection | "costs 0.0187 Dice" | costs 0.0 on 21 arms — but Spearman is +0.28, so both numbers are luck (§2.3) |
+| Augmentation | "worth about 0.006" | mean unresolved at 3 seeds; it **triples** the seed spread when removed (§2.2) |
 | Leave-one-centre-out split | "still has not been run" | **not runnable** — no centre label exists and the videos are uniformly re-encoded; replaced by a per-campaign split (§4.4) |
 | Cross-campaign transfer | not measured | **no model transfers**; the best-scoring arm is at chance on the 2021 campaign (§4.4) |
 
@@ -515,5 +587,5 @@ python tools/run_unet_sweep.py               # all eleven arms, ~4 h on one GPU
 python tools/unet_compare.py --classify all  # one scoring protocol for all of them
 
 python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt \
-    --unet results/unet/native384_s0/best.pt --on all --n 240
+    --unet results/unet/native384_s1/best.pt --on all --n 240
 ```

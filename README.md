@@ -205,28 +205,35 @@ reaches 0.650, so the temporal gain is not attributable to transition modelling.
 ### Segmentation
 
 A U-Net on the same ResNet-18 encoder segments the pubic symphysis and fetal
-head. Eleven arms, all scored one way — predictions resampled back to the
+head. Twenty-one arms, all scored one way — predictions resampled back to the
 masks' native 512×512 and compared against the untouched ground truth, which is
 the protocol the published 0.893–0.930 range uses.
 
 | Configuration | Test Dice (PS / FH / mean) |
 |---|---|
 | Three-seed base config | 0.8665 ± 0.0034 |
-| Best single arm (`native384_s0`) | 0.852 / 0.912 / **0.8821** |
-| Ensemble over native input sizes | 0.853 / 0.919 / **0.8859** |
+| Shipped arm (`native384_s1`) | 0.863 / 0.917 / **0.8897** |
+| Shipped config, 3 seeds ensembled | 0.862 / 0.921 / **0.8913** |
 
 The frames are cached at a 256px short side while the masks and source videos
 are 512×512, so re-decoding the 2,915 masked frames at native resolution is
-worth **+0.016 Dice** — the largest single-model effect in the sweep, and 4.6×
-the seed spread. Ensembling is worth another +0.004. A larger encoder, more
-input resolution past 384px, and test-time augmentation are all inside the
-noise or below it; dropping the Dice term costs 0.012 and training from scratch
-costs 0.009.
+worth **+0.0163 Dice** at 384px — the only effect in the sweep that resolves at
+three seeds (t = +3.79). It is sharper than "more resolution helps": *cached*
+384px, interpolated up from the 256px cache, instead **loses** 0.010 and
+triples the seed spread. Asking for a resolution the pixels do not contain is
+worse than not asking.
 
-The 40-mask validation split cannot rank the arms — validation and test Dice
-correlate at Spearman **r = 0.27**, and selecting on validation would have cost
-0.019 Dice. The shipped model was therefore picked on test, which the demo's
-metadata states.
+Arms within ~2σ of base were re-run at three seeds, and two single-seed results
+did not survive. ResNet-34 read as −0.005 at one seed and is **+0.0008** at
+three — the sign flipped, so the encoder makes no difference. Removing
+augmentation does not resolve as a mean shift either, but it triples the spread:
+on this corpus augmentation buys stability, not Dice. Dropping the Dice term
+(−0.012) and training from scratch (−0.009) remain the two effects that matter.
+
+The 40-mask validation split ranks the arms almost at random — validation and
+test Dice correlate at Spearman **r = 0.28** over 21 arms. It happens to pick
+the test-best arm this time, so the shipped model is not selected on test; but
+with that correlation, that is luck rather than a working selector.
 
 ### Attention
 
@@ -281,12 +288,17 @@ release carries no centre label and every video is uniformly re-encoded. Details
 and limits in [docs/SEGMENTATION_AND_ATTENTION.md](docs/SEGMENTATION_AND_ATTENTION.md) §4.4.
 
 Scored as a classifier by how much anatomy it finds, the segmenter reaches
-**0.530 ± 0.039 macro-F1** across the eleven arms, below the dense frame
-classifier's 0.610 ± 0.032. An earlier version of this README reported 0.607
-and called that a match; it was one seed at the top of a wide distribution.
-The best arms do reach 0.603 and 0.622, and the threshold-free AUPRC is far
-more stable at 0.757 ± 0.024, so what is unreliable is converting a segmented
-area into a decision — not the segmenter's ordering of frames.
+**0.530 ± 0.039 macro-F1**, below the dense frame classifier's 0.610 ± 0.032.
+An earlier version of this README reported 0.607 and called that a match; it
+was one seed at the top of a wide distribution. A later version retreated to
+"the best arms reach 0.603 and 0.622", and that did not survive either: running
+the same configuration at another seed gives **0.456**, 0.147 lower, and that
+lower seed is the one with the best Dice in the sweep. Better segmentation does
+not buy a better derived classifier.
+
+The threshold-free AUPRC is far more stable at 0.757 ± 0.024, so what is
+unreliable is converting a segmented area into a decision — not the segmenter's
+ordering of frames. The demo labels its area-derived verdict accordingly.
 
 Full write-up, including why the browser's resampling had to be rewritten in
 fixed-point arithmetic:

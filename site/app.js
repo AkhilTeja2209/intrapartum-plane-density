@@ -484,8 +484,11 @@ function renderSegModelLine(sm) {
           d.pubic_symphysis.toFixed(3)}, FH ${d.fetal_head.toFixed(3)})`
       : null,
     d.n_masks != null ? `${d.n_masks} held-out masks` : null,
+    // Labelled "unreliable" deliberately. Across eleven arms this rule scores
+    // 0.530 +/- 0.039 and its choice flips between seeds, so presenting the
+    // number bare invites reading it as a second accuracy figure.
     m.macro_f1 != null
-      ? `area-derived macro-F1 ${m.macro_f1.toFixed(3)}` : null,
+      ? `area-derived macro-F1 ${m.macro_f1.toFixed(3)} (unreliable)` : null,
     sm.quantised ? `${sm.onnx_mb} MB int8` : `${sm.onnx_mb} MB`,
   ].filter(Boolean);
   const el = $("seg-model-line");
@@ -521,6 +524,7 @@ function renderSeg(seg, dt) {
   $("area-ps").textContent = pct(seg.ps);
   $("area-fh").textContent = pct(seg.fh);
 
+  const m0 = sm.derived_metrics || {};
   const rule = sm.derived_rule || "min";
   const score = planeScore(seg, rule);
   const thr = Number(sm.derived_threshold);
@@ -537,10 +541,14 @@ function renderSeg(seg, dt) {
                      ps: "the symphysis area alone",
                      fh: "the head area alone",
                      sum: "the two areas added" }[rule] || rule;
+  const f1Text = m0.macro_f1 != null
+    ? ` On held-out frames this rule scores only ${m0.macro_f1.toFixed(3)} ` +
+      `macro-F1, so treat it as a readout of the drawing, not as a verdict.`
+    : "";
   $("seg-note").textContent =
-    `This is a second, independent opinion, made only out of what was drawn: ` +
-    `${ruleText} is ${score.toExponential(2)} against a threshold of ` +
-    `${thr.toExponential(2)} picked on the validation split.`;
+    `Made only out of what was drawn: ${ruleText} is ` +
+    `${score.toExponential(2)} against a threshold of ` +
+    `${thr.toExponential(2)} picked on the validation split.${f1Text}`;
 
   // The two stages are trained on different supervision and can disagree.
   // Saying so is the point of showing both: the cascade's error is the sum of
@@ -555,9 +563,12 @@ function renderSeg(seg, dt) {
   $("seg-caveat").textContent = m.recall_standard != null
     ? `Read it with its error profile in mind: every mask in the training set ` +
       `is a standard plane, so the segmenter has never been shown a negative ` +
-      `and over-calls them — recall ${m.recall_standard.toFixed(2)} against ` +
-      `specificity ${Number(m.specificity).toFixed(2)} on ` +
-      `${Number(m.n).toLocaleString()} held-out frames.`
+      `and draws anatomy on almost every frame — recall ` +
+      `${m.recall_standard.toFixed(2)} against specificity ` +
+      `${Number(m.specificity).toFixed(2)} on ` +
+      `${Number(m.n).toLocaleString()} held-out frames, meaning it calls ` +
+      `${(100 * (1 - Number(m.specificity))).toFixed(0)}% of non-standard ` +
+      `frames standard.`
     : "";
 
   $("seg-out").hidden = false;

@@ -1,5 +1,5 @@
 {
-  "run": "results/unet/native384_s0",
+  "run": "results/unet/native384_s1",
   "arch": "resnet18",
   "img_size": 384,
   "config": {
@@ -9,7 +9,7 @@
     "pretrained": true,
     "augment": true,
     "tta": false,
-    "seed": 0,
+    "seed": 1,
     "lr": 0.0003,
     "epochs": 40,
     "batch_size": 8
@@ -42,66 +42,66 @@
     ]
   },
   "test_dice": {
-    "pubic_symphysis": 0.8521676105032753,
-    "fetal_head": 0.911937010087201,
-    "mean_foreground": 0.8820523102952381,
+    "pubic_symphysis": 0.8625512561478262,
+    "fetal_head": 0.9168425866656439,
+    "mean_foreground": 0.8896969214067351,
     "n_masks": 300,
     "estimator": "per-image mean, classes present only",
     "resolution": 512
   },
   "selection": {
     "basis": "best single arm on the held-out test masks",
-    "validation_would_have_chosen": "base_s1",
-    "validation_rank_correlation": 0.27272727272727276,
+    "validation_would_have_chosen": "native384_s1",
+    "validation_rank_correlation": 0.2831168831168831,
     "seed_spread_std": 0.0034269570432173763
   },
   "derived_rule": "geomean",
   "derived_threshold": 0.05,
   "derived_metrics": {
-    "macro_f1": 0.6032590894004883,
-    "balanced_accuracy": 0.6326768476903446,
-    "auprc": 0.7596375494932422,
-    "recall_standard": 0.9757362090418913,
-    "specificity": 0.2896174863387978,
+    "macro_f1": 0.45589669015356193,
+    "balanced_accuracy": 0.5462525226720751,
+    "auprc": 0.7218141223059897,
+    "recall_standard": 0.9933637494815429,
+    "specificity": 0.09914129586260734,
     "n": 8665
   },
   "onnx_mb": 57.28,
   "quantised": false,
   "verify": {
     "n_frames": 60,
-    "max_abs_logit_diff": 6.413459777832031e-05,
-    "dice_torch": 0.891287616947601,
-    "dice_onnx_fp32": 0.891287616947601,
+    "max_abs_logit_diff": 7.319450378417969e-05,
+    "dice_torch": 0.8941521881182675,
+    "dice_onnx_fp32": 0.8941521881182675,
     "dice_onnx_int8": null
   },
   "example_refs": {
     "examples/standard_0.png": {
       "areas": {
-        "pubic_symphysis": 0.03024068847298622,
-        "fetal_head": 0.2289917767047882
+        "pubic_symphysis": 0.03196509927511215,
+        "fetal_head": 0.23092405498027802
       },
-      "score": 0.08321579545736313
+      "score": 0.0859157145023346
     },
     "examples/standard_1.png": {
       "areas": {
-        "pubic_symphysis": 0.023943768814206123,
-        "fetal_head": 0.20383480191230774
+        "pubic_symphysis": 0.02918478474020958,
+        "fetal_head": 0.22261261940002441
       },
-      "score": 0.06986110657453537
+      "score": 0.08060335367918015
     },
     "examples/nonstandard_0.png": {
       "areas": {
-        "pubic_symphysis": 0.022911451756954193,
-        "fetal_head": 0.20755524933338165
+        "pubic_symphysis": 0.02790323831140995,
+        "fetal_head": 0.21874308586120605
       },
-      "score": 0.06895935535430908
+      "score": 0.07812579721212387
     },
     "examples/nonstandard_1.png": {
       "areas": {
-        "pubic_symphysis": 0.0008201075252145529,
-        "fetal_head": 0.00561848608776927
+        "pubic_symphysis": 0.002200440503656864,
+        "fetal_head": 0.0618099570274353
       },
-      "score": 0.002146570011973381
+      "score": 0.011662295088171959
     }
   },
   "dataset": "IUGC 2024 (Zenodo 10.5281/zenodo.17655183), CC-BY-4.0"
