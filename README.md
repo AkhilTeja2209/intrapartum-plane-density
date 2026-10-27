@@ -170,7 +170,7 @@ so both emit one probability per frame and the same metrics apply to each.
 | `src/train_unet.py` | Segmentation training; the area-derived classifier |
 | `src/gradcam.py` | Grad-CAM for both arms; the anatomical attention ratio |
 | `src/analyze.py` | Summary tables and significance tests |
-| `site/` | Static browser demo running both exported models client-side |
+| `site/` | Static browser demo running both exported models client-side, with onnxruntime-web vendored under `site/vendor/` so the page needs no CDN |
 
 ---
 

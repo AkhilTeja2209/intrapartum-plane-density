@@ -40,6 +40,24 @@ jobs:
             echo "site/model/unet_meta.json is missing"; exit 1; }
           ls -lh site/model
 
+      # The runtime is vendored rather than fetched from a CDN, so a missing
+      # file here is a page that cannot run anything -- and the .js bundle and
+      # the .wasm binary have to travel together or the loader fails at the
+      # point where it instantiates the module.
+      - name: Check the vendored runtime is present
+        run: |
+          for f in ort.wasm.min.js ort-wasm-simd-threaded.wasm \
+                   ort-wasm-simd-threaded.mjs; do
+            test -s "site/vendor/onnxruntime-web/$f" || {
+              echo "site/vendor/onnxruntime-web/$f is missing -- see the README there"
+              exit 1; }
+          done
+          grep -q 'vendor/onnxruntime-web/ort.wasm.min.js' site/index.html || {
+            echo "index.html does not load the vendored runtime"; exit 1; }
+          ! grep -q 'cdn.jsdelivr.net' site/index.html site/app.js || {
+            echo "a CDN reference is back in the page"; exit 1; }
+          ls -lh site/vendor/onnxruntime-web
+
       # Pages rejects an artefact over 1 GB, and a page nobody can load is a
       # failed deploy whatever the size limit says. Fail here with a readable
       # message rather than in the browser.

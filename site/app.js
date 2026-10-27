@@ -12,7 +12,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { session: null, meta: null, busy: false,
+const state = { session: null, meta: null, busy: false, loadError: null,
                 showCam: true, lastCam: null, lastCrop: null,
                 // stage two: the segmenter is a second model and a second
                 // download, so it is fetched on request and then reused
@@ -29,33 +29,138 @@ function setStatus(msg, isError = false) {
 
 /* ---------------------------------------------------------------- model --- */
 
+/* The runtime is served from this origin. It used to be pulled from a public
+ * CDN, which put a third party on the critical path of a page whose selling
+ * point is that nothing leaves the machine: a visitor whose network, DNS or
+ * extensions did not reach that host saw "Failed to fetch" and had no way to
+ * tell which of three downloads had died. vendor/onnxruntime-web/ holds the
+ * 1.19.2 wasm build -- see the README there for provenance and hashes.
+ *
+ * Absolute, not relative: onnxruntime-web passes this through to a dynamic
+ * import() of its .mjs loader, and "vendor/..." is not a resolvable module
+ * specifier -- only "./vendor/..." or a full URL is. A bare relative path
+ * loads the graph and then fails at instantiation with "no available
+ * backend found". */
+const RUNTIME_DIR = new URL("vendor/onnxruntime-web/", document.baseURI).href;
+
+/** Fetch bytes with progress, failing with a message that names the file.
+ *  The Fetch API reports every network failure as the bare string "Failed to
+ *  fetch", which is unactionable on a page that pulls a 44.7 MB graph, a
+ *  57.3 MB graph and a WebAssembly runtime: it does not even say which. */
+async function fetchBytes(url, label, onProgress) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`${label} (${url}) could not be fetched: ${err.message}`);
+  }
+  if (!res.ok) throw new Error(`${label} (${url}) returned HTTP ${res.status}`);
+  if (!res.body) return new Uint8Array(await res.arrayBuffer());
+
+  // 1e6, not 1<<20: model_meta.json's onnx_mb is decimal, and a progress line
+  // counting up to 42.6 MB for a download the page calls 44.7 MB reads like a
+  // bug in whichever number the visitor happens to trust.
+  const mb = (n) => (n / 1e6).toFixed(1);
+  const total = Number(res.headers.get("content-length")) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+
+  for (;;) {
+    let piece;
+    try {
+      piece = await reader.read();
+    } catch (err) {
+      // A download cut off part-way is the failure this page is most exposed
+      // to, so say how far it got rather than reporting it like a dead host.
+      throw new Error(
+        `${label} (${url}) stopped after ${mb(got)} MB` +
+        (total ? ` of ${mb(total)} MB` : "") + `: ${err.message}`);
+    }
+    if (piece.done) break;
+    chunks.push(piece.value);
+    got += piece.value.length;
+    if (onProgress) onProgress(got, total);
+  }
+  if (total && got !== total) {
+    throw new Error(
+      `${label} (${url}) arrived truncated: ${mb(got)} MB of ${mb(total)} MB`);
+  }
+
+  const bytes = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.length; }
+  return bytes;
+}
+
+async function fetchJson(url, label) {
+  return JSON.parse(new TextDecoder().decode(await fetchBytes(url, label)));
+}
+
+/** A percentage, so that a slow link looks slow rather than broken. The
+ *  classifier is 44.7 MB and the segmenter 57.3 MB; on a 2 MB/s connection
+ *  that is half a minute of a status line that used to say nothing. */
+function progressStatus(what) {
+  return (got, total) => {
+    const mb = (got / 1e6).toFixed(1);
+    setStatus(total
+      ? `${what}: ${mb} of ${(total / 1e6).toFixed(1)} MB ` +
+        `(${Math.round(100 * got / total)}%)…`
+      : `${what}: ${mb} MB…`);
+  };
+}
+
+/** Build a session from bytes already in hand, so that a network failure is
+ *  attributed to the graph and a compile failure to the runtime. Letting
+ *  InferenceSession.create fetch the URL itself conflates the two. */
+async function sessionFrom(bytes, label) {
+  try {
+    return await ort.InferenceSession.create(bytes, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+  } catch (err) {
+    throw new Error(`${label} downloaded, but the WebAssembly runtime in ` +
+                    `${RUNTIME_DIR} could not start it: ${err.message}`);
+  }
+}
+
 async function init() {
+  const retry = $("retry");
+  if (retry) retry.hidden = true;
+  state.loadError = null;
+
   try {
     setStatus("Loading model metadata…");
-    state.meta = await (await fetch("model/model_meta.json")).json();
+    state.meta = await fetchJson("model/model_meta.json",
+                                 "the model metadata");
     renderModelLine(state.meta);
     // Start this now rather than after the 44.7 MB classifier has downloaded:
     // it is a few kB, it is independent, and it is what tells the visitor that
     // a second stage exists and what it would cost them.
     loadSegMeta();
 
-    if (window.ort) {
-      ort.env.wasm.wasmPaths =
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
-      ort.env.wasm.numThreads = 1;
-    } else {
-      throw new Error("onnxruntime-web failed to load");
+    if (!window.ort) {
+      throw new Error(
+        `the inference runtime (${RUNTIME_DIR}ort.wasm.min.js) did not load`);
     }
+    ort.env.wasm.wasmPaths = RUNTIME_DIR;
+    ort.env.wasm.numThreads = 1;
 
+    const label = `the ${state.meta.onnx_mb} MB classifier`;
     setStatus(`Loading model (${state.meta.onnx_mb} MB)… first load only.`);
-    state.session = await ort.InferenceSession.create("model/model.onnx", {
-      executionProviders: ["wasm"],
-      graphOptimizationLevel: "all",
-    });
+    const bytes = await fetchBytes("model/model.onnx", label,
+                                   progressStatus("Loading model"));
+    state.session = await sessionFrom(bytes, label);
     setStatus("Model ready.");
   } catch (err) {
     console.error(err);
+    // Before the retry button this was a dead end: the only way out of a
+    // dropped download was for the visitor to work out that reloading the
+    // page by hand would start it again.
+    state.loadError = err.message;
     setStatus(`Could not load the model: ${err.message}`, true);
+    if (retry) retry.hidden = false;
   }
 
   loadExamples();
@@ -444,7 +549,8 @@ function paintSeg(canvas, baseCanvas, seg, colours, show) {
  *  visitor decides whether to download it. */
 async function loadSegMeta() {
   try {
-    state.segMeta = await (await fetch("model/unet_meta.json")).json();
+    state.segMeta = await fetchJson("model/unet_meta.json",
+                                    "the segmenter metadata");
     renderSegModelLine(state.segMeta);
     const b = $("seg-run");
     if (b) b.textContent =
@@ -460,11 +566,11 @@ async function ensureSegSession() {
 
   state.segLoading = (async () => {
     if (!state.segMeta) await loadSegMeta();
+    const label = `the ${state.segMeta.onnx_mb} MB segmenter`;
     setStatus(`Fetching the segmentation model (${state.segMeta.onnx_mb} MB)…`);
-    state.segSession = await ort.InferenceSession.create("model/unet.onnx", {
-      executionProviders: ["wasm"],
-      graphOptimizationLevel: "all",
-    });
+    const bytes = await fetchBytes("model/unet.onnx", label,
+                                   progressStatus("Fetching the segmenter"));
+    state.segSession = await sessionFrom(bytes, label);
     return state.segSession;
   })();
   try {
@@ -625,7 +731,12 @@ function wireSeg() {
 /* ------------------------------------------------------------- inference --- */
 
 async function classify(img, truthLabel, refKey = null, refProb = null) {
-  if (!state.session) { setStatus("Model is still loading…", true); return; }
+  if (!state.session) {
+    setStatus(state.loadError
+      ? `The model did not load: ${state.loadError}`
+      : "Model is still loading…", true);
+    return;
+  }
   if (state.busy) return;
   state.busy = true;
   setStatus("Running…");
@@ -784,9 +895,13 @@ function wireInput() {
 }
 
 async function loadExamples() {
+  // init() can run more than once now that loading can be retried, and the
+  // buttons must not accumulate on each attempt.
+  if (loadExamples.done) return;
   try {
-    const list = await (await fetch("examples/examples.json")).json();
+    const list = await fetchJson("examples/examples.json", "the examples");
     const box = $("example-buttons");
+    loadExamples.done = true;
     list.forEach((ex, i) => {
       const b = document.createElement("button");
       b.className = "ex";
@@ -822,7 +937,21 @@ function wireCamToggle() {
   });
 }
 
+function wireRetry() {
+  const btn = $("retry");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await init();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 wireCamToggle();
 wireSeg();
 wireInput();
+wireRetry();
 init();

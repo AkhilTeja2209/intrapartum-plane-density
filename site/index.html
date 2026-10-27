@@ -6,7 +6,7 @@
 <title>Intrapartum Standard-Plane Classifier — research demo</title>
 <meta name="description" content="Research demo: a ResNet-18 trained on the IUGC 2024 intrapartum ultrasound dataset, running in your browser. Not a medical device.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫀</text></svg>">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -113,6 +113,10 @@
     </div>
   </div>
   <p id="status" class="status" role="status"></p>
+  <!-- A dropped download used to leave the page dead: the status line said so
+       and the only way out was for the visitor to reload by hand. -->
+  <button id="retry" class="ex" type="button" hidden>Try loading the model
+    again</button>
 </section>
 
 <footer class="wrap">
@@ -131,11 +135,16 @@
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
+<!-- Served from this origin rather than a CDN: a demo whose claim is that the
+     image never leaves the machine should not need a third-party host to
+     start, and a blocked CDN was indistinguishable from a broken page. The
+     wasm-only bundle is 46 kB against ~1 MB for the all-backends build, and
+     the WebGL/WebGPU backends are unused here. See vendor/onnxruntime-web/. -->
+<script src="vendor/onnxruntime-web/ort.wasm.min.js?v=1.19.2"></script>
 <!-- The query is a cache buster. The page's preprocessing has to match
      the shipped model exactly, so a browser holding a stale app.js
      against a freshly exported graph is a correctness bug, not a
      cosmetic one. Bump it whenever app.js or a model changes. -->
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
