@@ -115,7 +115,7 @@ python tools/run_unet_sweep.py
 python tools/unet_compare.py --classify
 
 # attention: Grad-CAM on both classes, using the segmenter's predicted masks
-python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt     --unet results/unet/base_s0/best.pt --on all
+python -m src.gradcam --checkpoint results/sparse_k1__frame__seed0/best.pt     --unet results/unet/native384_s1/best.pt --on all
 
 # cross-campaign transfer: score the 2021 and 2024 test campaigns separately
 python -m tools.per_campaign
