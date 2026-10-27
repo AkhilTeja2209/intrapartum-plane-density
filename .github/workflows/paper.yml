@@ -21,28 +21,32 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The first version of this job installed TeX with apt and hung for over
+    # 11 minutes on a slow mirror, having compiled the identical source in
+    # 2m46s the run before. A build that can hang indefinitely on someone
+    # else's mirror is not a usable check, so cap it: a hang now fails in a
+    # bounded time rather than occupying a runner for six hours.
+    timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
 
-      # texlive-publishers carries IEEEtran.cls; the recommended/extra sets
-      # carry booktabs, hyperref and the rest of the preamble.
-      - name: Install TeX
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            texlive-latex-base texlive-latex-recommended \
-            texlive-latex-extra texlive-publishers texlive-fonts-recommended
-
-      # Twice, so cross-references and table numbers resolve. -halt-on-error
-      # turns a LaTeX error into a failed job instead of an interactive prompt.
+      # TeX now comes from a prebuilt image rather than apt, which removes the
+      # mirror from the critical path entirely -- there is no apt-get update to
+      # hang on. The image is pulled from a registry and cached by the runner
+      # infrastructure between jobs. latexmk runs pdflatex as many times as the
+      # cross-references need, which is what the two hand-written passes were
+      # emulating, and it fails the job on a LaTeX error.
       - name: Build
-        working-directory: paper
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error main.tex
-          pdflatex -interaction=nonstopmode -halt-on-error main.tex
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: main.tex
+          working_directory: paper
+          latexmk_use_xelatex: false
 
       # Undefined references and overfull boxes do not fail the build, so
-      # surface them rather than letting them pass unseen.
+      # surface them rather than letting them pass unseen. latexmk resolves
+      # references across passes, so anything still undefined here is real.
       - name: Report warnings
         working-directory: paper
         run: |
@@ -50,6 +54,13 @@ jobs:
           grep -n "undefined" main.log || echo "none"
           echo "--- overfull boxes ---"
           grep -c "Overfull" main.log || echo "0"
+
+      # A missing PDF with a green tick would be worse than a red one.
+      - name: Check the PDF exists
+        working-directory: paper
+        run: |
+          test -s main.pdf
+          echo "main.pdf $(stat -c%s main.pdf) bytes"
 
       - uses: actions/upload-artifact@v4
         with:
