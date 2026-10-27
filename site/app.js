@@ -82,11 +82,12 @@ async function fetchBytes(url, label, onProgress) {
     got += piece.value.length;
     if (onProgress) onProgress(got, total);
   }
-  if (total && got !== total) {
-    throw new Error(
-      `${label} (${url}) arrived truncated: ${mb(got)} MB of ${mb(total)} MB`);
-  }
-
+  // No completeness check against content-length: the server compresses, so
+  // the header is the size on the wire and `got` is the size after decoding.
+  // Comparing them failed every fetch on GitHub Pages while passing against a
+  // local server that does not compress. A transfer cut short raises at the
+  // reader above, and a graph that arrives damaged fails to parse in
+  // sessionFrom, so nothing is lost by dropping it.
   const bytes = new Uint8Array(got);
   let at = 0;
   for (const c of chunks) { bytes.set(c, at); at += c.length; }
@@ -99,13 +100,20 @@ async function fetchJson(url, label) {
 
 /** A percentage, so that a slow link looks slow rather than broken. The
  *  classifier is 44.7 MB and the segmenter 57.3 MB; on a 2 MB/s connection
- *  that is half a minute of a status line that used to say nothing. */
-function progressStatus(what) {
+ *  that is half a minute of a status line that used to say nothing.
+ *
+ *  `expectMb` comes from the export metadata, not from content-length: the
+ *  server gzips, so the header counts bytes on the wire (41.5 MB for the
+ *  classifier) while the reader counts bytes after decoding (44.7 MB), and a
+ *  bar fed the header runs past 100%. */
+function progressStatus(what, expectMb) {
+  const expect = expectMb ? expectMb * 1e6 : 0;
   return (got, total) => {
     const mb = (got / 1e6).toFixed(1);
-    setStatus(total
-      ? `${what}: ${mb} of ${(total / 1e6).toFixed(1)} MB ` +
-        `(${Math.round(100 * got / total)}%)…`
+    const end = expect || total;
+    setStatus(end
+      ? `${what}: ${mb} of ${(end / 1e6).toFixed(1)} MB ` +
+        `(${Math.min(100, Math.round(100 * got / end))}%)…`
       : `${what}: ${mb} MB…`);
   };
 }
@@ -149,8 +157,9 @@ async function init() {
 
     const label = `the ${state.meta.onnx_mb} MB classifier`;
     setStatus(`Loading model (${state.meta.onnx_mb} MB)… first load only.`);
-    const bytes = await fetchBytes("model/model.onnx", label,
-                                   progressStatus("Loading model"));
+    const bytes = await fetchBytes(
+      "model/model.onnx", label,
+      progressStatus("Loading model", state.meta.onnx_mb));
     state.session = await sessionFrom(bytes, label);
     setStatus("Model ready.");
   } catch (err) {
@@ -568,8 +577,9 @@ async function ensureSegSession() {
     if (!state.segMeta) await loadSegMeta();
     const label = `the ${state.segMeta.onnx_mb} MB segmenter`;
     setStatus(`Fetching the segmentation model (${state.segMeta.onnx_mb} MB)…`);
-    const bytes = await fetchBytes("model/unet.onnx", label,
-                                   progressStatus("Fetching the segmenter"));
+    const bytes = await fetchBytes(
+      "model/unet.onnx", label,
+      progressStatus("Fetching the segmenter", state.segMeta.onnx_mb));
     state.segSession = await sessionFrom(bytes, label);
     return state.segSession;
   })();
