@@ -193,17 +193,47 @@ def main() -> int:
     # it would to an upload -- the classifier crops, the segmenter does not. A
     # pre-cropped example would make the segmentation stage quietly operate on
     # a crop of a crop.
+    import pathlib
+
     from PIL import Image
 
     ex_dir = out_dir.parent / "examples"
     ex_dir.mkdir(parents=True, exist_ok=True)
     for stale in ex_dir.glob("*.jpg"):
         stale.unlink()
+    def has_content(path: pathlib.Path) -> bool:
+        """Reject frames that are essentially black.
+
+        About 1.3% of test frames are blank -- the probe off the body, or a
+        transition -- and every one of them is labelled non-standard. Picking
+        examples by position landed on one: the page showed an empty frame, no
+        outline and a flat heatmap, which reads as a broken demo rather than as
+        a blank input. They are also the least interesting negatives, since
+        "black therefore not a standard plane" needs no anatomy.
+        """
+        v = np.asarray(Image.open(path).convert("L"), dtype=np.float32)
+        return float(v.mean()) >= 10.0 and float((v > 5).mean()) >= 0.10
+
     manifest = []
     for lab, tag in ((1, "standard"), (0, "nonstandard")):
-        pick = test_df[test_df.label == lab]
-        for j, i in enumerate(np.linspace(0, len(pick) - 1, 2).astype(int)):
-            r = pick.iloc[int(i)]
+        pick = test_df[test_df.label == lab].reset_index(drop=True)
+        # Scan inwards from each end separately, not along one combined walk:
+        # the two examples should come from opposite ends of the split, which
+        # here means one from each acquisition campaign (the 2021 videos sort
+        # first, the 2024 ones last). A single walk returns frames 0 and 1 of
+        # the same video, which is two pictures of the same thing.
+        chosen = []
+        for scan in (range(len(pick)), range(len(pick) - 1, -1, -1)):
+            for i in scan:
+                r = pick.iloc[i]
+                if any(c.frame_path == r.frame_path for c in chosen):
+                    continue
+                if has_content(ROOT / a.frames_dir / r.frame_path):
+                    chosen.append(r)
+                    break
+        if len(chosen) < 2:
+            raise SystemExit(f"fewer than two non-blank {tag} frames found")
+        for j, r in enumerate(chosen):
             src = ROOT / a.frames_dir / r.frame_path
             dst = ex_dir / f"{tag}_{j}.png"
             Image.open(src).convert("L").save(dst, format="PNG", optimize=True)

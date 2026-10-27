@@ -491,6 +491,23 @@ The 40 validation videos are also renamed, so their provenance is unknown,
 which compounds the thin-validation problem in §2.3: the threshold and the
 arm are both selected on 40 videos that cannot be placed in either campaign.
 
+One more property of the test split, found by way of the demo. About **1.3% of
+test frames are essentially blank** — mean 8-bit luminance below 5, the probe
+off the body or a transition — and in a 1,500-frame sample **every one of them
+is labelled non-standard**, 20 of 20. That is roughly 2.9% of the negative
+class available to any model that learns "black, therefore not a standard
+plane", which needs no anatomy at all. It is too small to explain the campaign
+gap in §4.4, and it cuts the wrong way for it: blank frames make negatives
+*easier*, so they flatter whichever campaign holds more of them. It is recorded
+here because it is the kind of free lunch that should be subtracted from a
+headline number before the number is believed.
+
+It surfaced because the browser demo picks its example frames by position in
+the split, and landed on one: the page showed an empty frame, no outline and a
+flat heatmap, which reads as a broken demo rather than as a blank input. The
+picker now requires an example to have content, and takes one frame from each
+end of the split so the two examples come from different campaigns.
+
 Finally, the 2024 session grouping is a 10-minute-gap heuristic, not a stated
 fact like the 2021 examination prefix. If 2024's true sessions are coarser, its
 intervals are still slightly narrow — but its interval is the tight one in

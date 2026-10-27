@@ -98,10 +98,10 @@
     },
     "examples/nonstandard_1.png": {
       "areas": {
-        "pubic_symphysis": 0.002200440503656864,
-        "fetal_head": 0.0618099570274353
+        "pubic_symphysis": 0.032653991132974625,
+        "fetal_head": 0.1980506330728531
       },
-      "score": 0.011662295088171959
+      "score": 0.08041854947805405
     }
   },
   "dataset": "IUGC 2024 (Zenodo 10.5281/zenodo.17655183), CC-BY-4.0"
